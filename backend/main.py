@@ -55,7 +55,7 @@ app = FastAPI(
 # ----- CORS -----
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://usanexa-six.vercel.app"], # Hardcode karke test karein
+    allow_origins=["https://uxanexapps.vercel.app"], # Hardcode karke test karein
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
