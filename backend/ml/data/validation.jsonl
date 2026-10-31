@@ -1,0 +1,5 @@
+{"question": "Usanex mein home feed kya hai?", "answer": "Home feed app ka woh section hai jahan user ko social content aur connections se sambandhit information dikhane ka plan hai.", "topic": "feed", "status": "development"}
+{"question": "Machine learning kya hai?", "answer": "Machine learning mein computer data se patterns seekhta hai aur unka use predictions ya decisions ke liye karta hai.", "topic": "ai"}
+{"question": "Usanex mein status feature kya hai?", "answer": "Status feature ka uddeshya users ko apna status ya temporary update share karne dena hai. Current upload aur viewing behaviour implementation se verify karna chahiye.", "topic": "status", "status": "development"}
+{"question": "Usanex mein account kaise banega?", "answer": "Usanex ke planned registration flow mein user name, mobile number aur password dega, phir OTP verification ke baad account create hoga.", "topic": "account", "status": "planned"}
+{"question": "Usanex mein follow request reject kar sakte hain?", "answer": "Usanex ke connection workflow mein request ko reject karne ka feature design kiya gaya hai.", "topic": "connections", "status": "confirmed"}

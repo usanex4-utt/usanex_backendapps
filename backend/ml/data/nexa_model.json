@@ -1,0 +1,195 @@
+
+{
+  "examples_count": 37,
+  "vocabulary": [
+    "abhi", "account", "ai", "analysis", "available", "baare", "backend",
+    "bana", "banega", "batana", "batata", "chahiye", "chat", "code",
+    "connections", "data", "database", "de", "endpoint", "error",
+    "feature", "features", "feed", "follow", "format", "hai", "hain",
+    "har", "health", "hi", "ho", "hoga", "home", "hona", "hota",
+    "improve", "jawab", "jayenge", "ka", "kaam", "kaise", "kar",
+    "karega", "karna", "karta", "kaun", "ke", "kis", "ko", "kya",
+    "learning", "liye", "machine", "main", "media", "mein", "mera",
+    "model", "mujhe", "na", "namaste", "naye", "nexa", "notifications",
+    "otp", "pakka", "par", "password", "pata", "planned", "profile",
+    "purpose", "python", "raha", "reel", "reject", "request", "sakte",
+    "sawal", "search", "seekhni", "sikhaye", "status", "storage",
+    "store", "technology", "to", "train", "tum", "usanex", "use",
+    "user", "username"
+  ],
+  "topic_docs": {
+    "technology": 3,
+    "usanex": 3,
+    "connections": 3,
+    "ai": 4,
+    "reels": 1,
+    "greeting": 2,
+    "security": 3,
+    "account": 2,
+    "nexa": 5,
+    "status": 1,
+    "profile": 1,
+    "data": 1,
+    "notifications": 1,
+    "identity": 1,
+    "search": 1,
+    "coding": 3,
+    "feed": 1,
+    "media": 1
+  },
+  "word_topic": {
+    "technology": {
+      "database": 1, "ka": 3, "usanex": 3, "kaam": 1, "kya": 2,
+      "hai": 3, "mein": 1, "endpoint": 1, "health": 1, "backend": 2,
+      "batata": 1, "technology": 1, "kis": 1, "par": 1, "bana": 1
+    },
+    "usanex": {
+      "kaise": 1, "karega": 1, "usanex": 3, "kaam": 1, "mein": 1,
+      "chat": 1, "available": 1, "abhi": 1, "ka": 2, "planned": 1,
+      "kya": 2, "hai": 2, "har": 1, "feature": 1, "main": 1,
+      "purpose": 1
+    },
+    "connections": {
+      "request": 2, "follow": 2, "usanex": 3, "kya": 2, "hai": 1,
+      "mein": 3, "hain": 2, "sakte": 1, "kar": 1, "reject": 1,
+      "connections": 1
+    },
+    "ai": {
+      "hai": 3, "ai": 3, "kya": 3, "hota": 2, "karega": 1,
+      "usanex": 1, "mein": 1, "chat": 1, "learning": 1,
+      "machine": 1, "train": 1, "kaise": 1, "model": 1
+    },
+    "reels": {
+      "reel": 1, "usanex": 1, "hai": 1, "kya": 1, "mein": 1
+    },
+    "greeting": {
+      "hi": 1, "namaste": 1
+    },
+    "security": {
+      "otp": 1, "ka": 2, "usanex": 2, "kaam": 1, "kya": 2,
+      "hai": 1, "mein": 2, "kaise": 1, "hona": 1, "store": 1,
+      "password": 2, "chahiye": 2, "ko": 1, "nexa": 1, "user": 1,
+      "batana": 1
+    },
+    "account": {
+      "kaise": 1, "account": 1, "usanex": 2, "mein": 1,
+      "banega": 1, "username": 1, "ka": 1, "kya": 1, "hai": 1,
+      "format": 1
+    },
+    "nexa": {
+      "na": 1, "pata": 2, "karna": 1, "to": 1, "ko": 3,
+      "usanex": 2, "pakka": 1, "baare": 1, "nexa": 5, "kya": 3,
+      "chahiye": 1, "mein": 1, "ke": 2, "feature": 1, "ho": 1,
+      "jawab": 1, "sawal": 1, "ka": 1, "hai": 2, "har": 1,
+      "hoga": 1, "improve": 1, "kaise": 2, "features": 1,
+      "sikhaye": 1, "jayenge": 1, "naye": 1
+    },
+    "status": {
+      "usanex": 1, "status": 1, "kya": 1, "hai": 1, "mein": 1,
+      "feature": 1
+    },
+    "profile": {
+      "profile": 1, "ka": 1, "usanex": 1, "kaam": 1, "kya": 1,
+      "hai": 1, "mein": 1
+    },
+    "data": {
+      "hai": 1, "data": 1, "analysis": 1, "kya": 1
+    },
+    "notifications": {
+      "hain": 1, "notifications": 1, "kya": 1, "usanex": 1
+    },
+    "identity": {
+      "tum": 1, "kaun": 1, "ho": 1
+    },
+    "search": {
+      "ka": 1, "usanex": 1, "kaam": 1, "kya": 1, "hai": 1,
+      "mein": 1, "search": 1
+    },
+    "coding": {
+      "hai": 3, "python": 2, "kya": 1, "de": 1, "error": 1,
+      "mera": 1, "code": 1, "raha": 1, "seekhni": 1, "mujhe": 1
+    },
+    "feed": {
+      "feed": 1, "usanex": 1, "home": 1, "hai": 1, "kya": 1
+    },
+    "media": {
+      "storage": 1, "karta": 1, "usanex": 1, "use": 1, "kya": 1,
+      "hai": 1, "media": 1, "liye": 1, "ke": 1
+    }
+  },
+  "topic_answers": {
+    "technology": {
+      "Database user accounts aur app ke zaroori structured records ko store aur retrieve karne ke liye use hota hai.": 1,
+      "Health endpoint server ki basic availability aur app status batane ke liye hota hai. Endpoint ka live response deployment ke waqt verify kiya jana chahiye.": 1,
+      "Usanex backend FastAPI aur SQLAlchemy use karta hai, aur project mein PostgreSQL database configured hai.": 1
+    },
+    "usanex": {
+      "Usanex chat feature users ko ek doosre se communicate karne mein madad karega.": 1,
+      "Nahi. Kuch features planned ya development mein ho sakte hain. Availability ka jawab dene se pehle current app implementation verify karna chahiye.": 1,
+      "Usanex ka main purpose social communication ko ek platform par lana hai, jahan users chat kar saken aur social features ka use kar saken.": 1
+    },
+    "connections": {
+      "Follow request ek user ki doosre user se connect hone ki request hai. Request accept ya reject karne ka flow app ke connection rules ke hisaab se chalega.": 1,
+      "Usanex ke connection workflow mein request ko reject karne ka feature design kiya gaya hai.": 1,
+      "Connections feature users ko doosre users se connect karne mein madad dene ke liye hai.": 1
+    },
+    "ai": {
+      "AI computer systems ko data se patterns samajhne aur tasks karne mein madad karta hai.": 1,
+      "AI chat ka uddeshya user ke sawalon ka jawab dena hai. NEXA ka current local prototype limited dataset aur matching logic use karta hai; abhi ise general-purpose AI nahi samajhna chahiye.": 1,
+      "Machine learning mein computer data se patterns seekhta hai aur unka use predictions ya decisions ke liye karta hai.": 1,
+      "AI model ko examples diye jaate hain. Training ke dauran model apni galti kam karne ke liye parameters update karta hai.": 1
+    },
+    "reels": {
+      "Reels short-form video content ke liye planned social feature hain.": 1
+    },
+    "greeting": {
+      "Hello! Main NEXA hoon. Bataiye, main kaise madad karun?": 1,
+      "Namaste! Main NEXA hoon. Aapka swagat hai.": 1
+    },
+    "security": {
+      "OTP verification account registration ya password recovery mein user ke identifier ko verify karne ke liye use ho sakti hai. OTP ko secure aur limited validity ke saath implement karna chahiye.": 1,
+      "Password ko plain text mein store nahi karna chahiye. Secure password hashing ka use hona chahiye; Usanex backend mein Argon2 library use ki gayi hai.": 1,
+      "Nahi. NEXA ko kisi user ka password reveal, collect ya expose nahi karna chahiye.": 1
+    },
+    "account": {
+      "Usanex ke planned registration flow mein user name, mobile number aur password dega, phir OTP verification ke baad account create hoga.": 1,
+      "Usanex ke design mein username FirstName, uske baad 5-digit unique number aur phir @usa suffix se banega. Udaharan: Uttam48217@usa.": 1
+    },
+    "nexa": {
+      "NEXA ko feature ki availability ka jhootha daawa nahi karna chahiye. Use kehna chahiye ki is feature ki current status verify karni hogi.": 1,
+      "Nahi. NEXA ka current prototype limited knowledge aur matching logic use karta hai. Jis baat ka bharosemand jawab na ho, use apni limitation batani chahiye.": 1,
+      "NEXA ko behtar examples, testing aur model training ke zariye improve kiya ja sakta hai.": 1,
+      "NEXA ke knowledge dataset mein verified feature descriptions aur question-answer examples add karke, phir dataset ko validate karke chatbot ke retrieval system mein load kiya ja sakta hai.": 1,
+      "NEXA Usanex ka planned AI assistant hai jo Usanex ke features samajhne aur users ke sawalon ka jawab dene ke liye develop ho raha hai.": 1
+    },
+    "status": {
+      "Status feature ka uddeshya users ko apna status ya temporary update share karne dena hai. Current upload aur viewing behaviour implementation se verify karna chahiye.": 1
+    },
+    "profile": {
+      "Profile ka kaam user ki basic identity aur profile information dikhana hai. Available profile fields app ke current implementation par depend karte hain.": 1
+    },
+    "data": {
+      "Data analysis mein data ko saaf karke usme patterns aur useful information khoji jaati hai.": 1
+    },
+    "notifications": {
+      "Notifications users ko app ke events aur connection requests ke baare mein update dene ke liye hain.": 1
+    },
+    "identity": {
+      "Main NEXA hoon, Usanex ke liye banaya ja raha assistant.": 1
+    },
+    "search": {
+      "Search feature users ya app mein available content ko dhoondhne mein madad karne ke liye hai. Search ke exact results current implementation par depend karte hain.": 1
+    },
+    "coding": {
+      "Python ek programming language hai jiska use software, automation aur AI mein hota hai.": 1,
+      "Error message aur sambandhit code bhejiye. Hum use step by step debug karenge.": 1,
+      "Python basics se shuru karein: variables, conditions, loops, functions aur phir projects banayein.": 1
+    },
+    "feed": {
+      "Home feed app ka woh section hai jahan user ko social content aur connections se sambandhit information dikhane ka plan hai.": 1
+    },
+    "media": {
+      "Usanex project mein Cloudinary ko media hosting ke liye consider kiya gaya hai. Actual upload configuration aur production status verify karna zaroori hai.": 1
+    }
+  }
+}
