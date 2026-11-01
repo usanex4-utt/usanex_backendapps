@@ -1,6 +1,6 @@
 
 # =========================================================
-# USANEX — AUTH ROUTES
+# USANEX — AUTHENTICATION ROUTES
 # File: backend/routes/auth.py
 # =========================================================
 
@@ -19,13 +19,18 @@ from sqlalchemy.orm import Session
 
 from ..database.database import get_db
 from ..database.models import User, UserSession
+
 from ..services.auth_service import (
     generate_user_id,
     generate_username,
     hash_password,
     verify_password,
 )
+
 from ..services.otp_service import create_otp, verify_otp
+
+# Redis services
+from ..services.redis import session_service, otp_service
 
 
 router = APIRouter(
@@ -33,9 +38,17 @@ router = APIRouter(
     tags=["Authentication"],
 )
 
+
+# =========================================================
+# CONFIGURATION
+# =========================================================
+
 SESSION_COOKIE_NAME = "usanex_session"
+
 SESSION_DURATION_DAYS = 30
 SESSION_DURATION_SECONDS = SESSION_DURATION_DAYS * 24 * 60 * 60
+
+OTP_LOGIN_DURATION_MINUTES = 10
 
 
 # =========================================================
@@ -50,30 +63,80 @@ def utc_now():
 # SESSION HELPERS
 # =========================================================
 
-def create_user_session(db: Session, user_id: int) -> str:
+def create_user_session(db: Session, user_id: int) -> tuple:
     session_token = secrets.token_urlsafe(48)
+
     now = utc_now()
+
+    expires_at = now + timedelta(
+        days=SESSION_DURATION_DAYS
+    )
 
     new_session = UserSession(
         session_token=session_token,
         user_id=user_id,
-        expires_at=now + timedelta(days=SESSION_DURATION_DAYS),
+        expires_at=expires_at,
         created_at=now,
     )
 
     db.add(new_session)
     db.commit()
+    db.refresh(new_session)
+
+    return session_token, expires_at
+
+
+async def create_authenticated_session(
+    db: Session,
+    user_id: int,
+    response: Response,
+):
+    session_token, expires_at = create_user_session(
+        db=db,
+        user_id=user_id,
+    )
+
+    # Save session in Redis
+    await session_service.cache_session(
+        session_token,
+        user_id,
+        expires_at,
+    )
+
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_token,
+        max_age=SESSION_DURATION_SECONDS,
+        httponly=True,
+        secure=True,
+        samesite="lax",
+        path="/",
+    )
 
     return session_token
 
 
-def get_valid_session(db: Session, session_token: str | None):
+async def get_valid_session(
+    db: Session,
+    session_token: str | None,
+):
     if not session_token:
         return None
 
+    # 1. Check Redis first
+    cached_session = await session_service.get_session(
+        session_token
+    )
+
+    if cached_session:
+        return cached_session
+
+    # 2. Database fallback
     session = (
         db.query(UserSession)
-        .filter(UserSession.session_token == session_token)
+        .filter(
+            UserSession.session_token == session_token
+        )
         .first()
     )
 
@@ -83,29 +146,52 @@ def get_valid_session(db: Session, session_token: str | None):
     expires_at = session.expires_at
 
     if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
+        expires_at = expires_at.replace(
+            tzinfo=timezone.utc
+        )
 
     if datetime.now(timezone.utc) >= expires_at:
         db.delete(session)
         db.commit()
+
+        await session_service.delete_session(
+            session_token
+        )
+
         return None
+
+    # Restore cache
+    await session_service.cache_session(
+        session_token,
+        session.user_id,
+        expires_at,
+    )
 
     return session
 
 
-def get_current_user_from_request(
+# =========================================================
+# CURRENT USER HELPER
+# =========================================================
+
+async def get_current_user_from_request(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    session_token = request.cookies.get(
+        SESSION_COOKIE_NAME
+    )
 
-    # Native mobile clients may not preserve Cookie headers.
+    # Native mobile support
     if not session_token:
-        authorization = request.headers.get("authorization", "")
+        authorization = request.headers.get(
+            "authorization", ""
+        )
+
         if authorization.lower().startswith("bearer "):
             session_token = authorization[7:].strip()
 
-    session = get_valid_session(
+    session = await get_valid_session(
         db=db,
         session_token=session_token,
     )
@@ -113,18 +199,17 @@ def get_current_user_from_request(
     if session is None:
         return None
 
-    user = (
+    # Redis cache can return a dictionary
+    if isinstance(session, dict):
+        user_id = session.get("user_id")
+    else:
+        user_id = session.user_id
+
+    return (
         db.query(User)
-        .filter(User.id == session.user_id)
+        .filter(User.id == user_id)
         .first()
     )
-
-    if user is None:
-        db.delete(session)
-        db.commit()
-        return None
-
-    return user
 
 
 # =========================================================
@@ -153,7 +238,7 @@ class RegisterOTPRequest(BaseModel):
 
 
 @router.post("/register/send-otp")
-def register_send_otp(
+async def register_send_otp(
     request: RegisterOTPRequest,
     db: Session = Depends(get_db),
 ):
@@ -178,15 +263,16 @@ def register_send_otp(
             detail="Mobile number is already registered",
         )
 
-    otp = create_otp(
-        db=db,
-        identifier=mobile,
-        purpose="register",
+    # Generate OTP in Redis
+    otp = await otp_service.generate_otp(
+        "register",
+        mobile,
     )
 
     return {
         "success": True,
-        "message": "OTP generated successfully",
+        "message": "Registration OTP generated",
+        # Development only. Remove in production.
         "development_otp": otp,
     }
 
@@ -203,19 +289,13 @@ class RegisterVerifyRequest(BaseModel):
 
 
 @router.post("/register/verify")
-def register_verify(
+async def register_verify(
     request: RegisterVerifyRequest,
+    response: Response,
     db: Session = Depends(get_db),
 ):
     name = request.name.strip()
     mobile = request.mobile.strip()
-    otp = request.otp.strip()
-
-    if not name or not mobile:
-        raise HTTPException(
-            status_code=400,
-            detail="Name and mobile are required",
-        )
 
     existing_user = (
         db.query(User)
@@ -229,11 +309,11 @@ def register_verify(
             detail="Mobile number is already registered",
         )
 
-    verified = verify_otp(
-        db=db,
-        identifier=mobile,
-        otp=otp,
-        purpose="register",
+    # Verify Redis OTP
+    verified = await otp_service.verify_otp(
+        "register",
+        mobile,
+        request.otp.strip(),
     )
 
     if not verified:
@@ -242,7 +322,10 @@ def register_verify(
             detail="Invalid or expired OTP",
         )
 
-    username = generate_username(name=name, db=db)
+    username = generate_username(
+        name=name,
+        db=db,
+    )
 
     while True:
         user_id = generate_user_id()
@@ -261,7 +344,9 @@ def register_verify(
         user_id=user_id,
         name=name,
         mobile=mobile,
-        password_hash=hash_password(request.password),
+        password_hash=hash_password(
+            request.password
+        ),
         profile_photo=None,
     )
 
@@ -269,20 +354,23 @@ def register_verify(
     db.commit()
     db.refresh(new_user)
 
+    # Automatically login after registration
+    session_token = await create_authenticated_session(
+        db,
+        new_user.id,
+        response,
+    )
+
     return {
         "success": True,
         "message": "Account created successfully",
-        "user": {
-            "username": new_user.username,
-            "user_id": new_user.user_id,
-            "name": new_user.name,
-            "mobile": new_user.mobile,
-        },
+        "user": serialize_user(new_user),
+        "session_token": session_token,
     }
 
 
 # =========================================================
-# LOGIN
+# PASSWORD LOGIN
 # =========================================================
 
 class LoginRequest(BaseModel):
@@ -291,7 +379,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(
+async def login(
     request: LoginRequest,
     response: Response,
     db: Session = Depends(get_db),
@@ -316,25 +404,28 @@ def login(
             detail="Invalid username/mobile or password",
         )
 
+    # Invalidate previous sessions
+    old_sessions = (
+        db.query(UserSession)
+        .filter(UserSession.user_id == user.id)
+        .all()
+    )
+
+    for old_session in old_sessions:
+        await session_service.delete_session(
+            old_session.session_token
+        )
+
     db.query(UserSession).filter(
         UserSession.user_id == user.id
     ).delete(synchronize_session=False)
 
     db.commit()
 
-    session_token = create_user_session(
-        db=db,
-        user_id=user.id,
-    )
-
-    response.set_cookie(
-        key=SESSION_COOKIE_NAME,
-        value=session_token,
-        max_age=SESSION_DURATION_SECONDS,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        path="/",
+    session_token = await create_authenticated_session(
+        db,
+        user.id,
+        response,
     )
 
     return {
@@ -346,17 +437,114 @@ def login(
 
 
 # =========================================================
+# MOBILE OTP LOGIN — SEND OTP
+# =========================================================
+
+class MobileOTPRequest(BaseModel):
+    mobile: str = Field(min_length=5, max_length=20)
+
+
+@router.post("/send-otp")
+async def send_otp(
+    request: MobileOTPRequest,
+    db: Session = Depends(get_db),
+):
+    mobile = request.mobile.strip()
+
+    user = (
+        db.query(User)
+        .filter(User.mobile == mobile)
+        .first()
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Account not found",
+        )
+
+    otp = await otp_service.generate_otp(
+        "login",
+        mobile,
+    )
+
+    # TODO: Integrate SMS provider here.
+    # Never print OTP in production logs.
+
+    return {
+        "success": True,
+        "message": "OTP sent successfully",
+        "development_otp": otp,
+    }
+
+
+# =========================================================
+# MOBILE OTP LOGIN — VERIFY OTP
+# =========================================================
+
+class MobileOTPVerifyRequest(BaseModel):
+    mobile: str = Field(min_length=5, max_length=20)
+    otp: str = Field(min_length=6, max_length=6)
+
+
+@router.post("/login/otp")
+async def login_with_otp(
+    request: MobileOTPVerifyRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+):
+    mobile = request.mobile.strip()
+
+    verified = await otp_service.verify_otp(
+        "login",
+        mobile,
+        request.otp.strip(),
+    )
+
+    if not verified:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid or expired OTP",
+        )
+
+    user = (
+        db.query(User)
+        .filter(User.mobile == mobile)
+        .first()
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Account not found",
+        )
+
+    session_token = await create_authenticated_session(
+        db,
+        user.id,
+        response,
+    )
+
+    return {
+        "success": True,
+        "message": "OTP login successful",
+        "user": serialize_user(user),
+        "session_token": session_token,
+    }
+
+
+# =========================================================
 # CURRENT USER
 # =========================================================
 
 @router.get("/me")
-def get_current_user(
+async def get_current_user(
     request: Request,
     db: Session = Depends(get_db),
 ):
-    user = get_current_user_from_request(
-        request=request,
-        db=db,
+    user = await get_current_user_from_request(
+        request,
+        db,
     )
 
     if user is None:
@@ -376,23 +564,40 @@ def get_current_user(
 # =========================================================
 
 @router.post("/logout")
-def logout(
+async def logout(
     request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ):
-    session_token = request.cookies.get(SESSION_COOKIE_NAME)
+    session_token = request.cookies.get(
+        SESSION_COOKIE_NAME
+    )
+
+    if not session_token:
+        authorization = request.headers.get(
+            "authorization", ""
+        )
+
+        if authorization.lower().startswith("bearer "):
+            session_token = authorization[7:].strip()
 
     if session_token:
         session = (
             db.query(UserSession)
-            .filter(UserSession.session_token == session_token)
+            .filter(
+                UserSession.session_token == session_token
+            )
             .first()
         )
 
         if session:
             db.delete(session)
             db.commit()
+
+        # Remove Redis cache
+        await session_service.delete_session(
+            session_token
+        )
 
     response.delete_cookie(
         key=SESSION_COOKIE_NAME,
@@ -417,7 +622,7 @@ class ForgotPasswordOTPRequest(BaseModel):
 
 
 @router.post("/forgot-password/send-otp")
-def forgot_password_send_otp(
+async def forgot_password_send_otp(
     request: ForgotPasswordOTPRequest,
     db: Session = Depends(get_db),
 ):
@@ -438,15 +643,14 @@ def forgot_password_send_otp(
             detail="Account not found",
         )
 
-    otp = create_otp(
-        db=db,
-        identifier=identifier,
-        purpose="forgot_password",
+    otp = await otp_service.generate_otp(
+        "forgot_password",
+        user.mobile,
     )
 
     return {
         "success": True,
-        "message": "Password reset OTP generated successfully",
+        "message": "Password reset OTP generated",
         "development_otp": otp,
     }
 
@@ -463,7 +667,7 @@ class ForgotPasswordResetRequest(BaseModel):
 
 
 @router.post("/forgot-password/reset")
-def forgot_password_reset(
+async def forgot_password_reset(
     request: ForgotPasswordResetRequest,
     db: Session = Depends(get_db),
 ):
@@ -490,11 +694,11 @@ def forgot_password_reset(
             detail="Account not found",
         )
 
-    verified = verify_otp(
-        db=db,
-        identifier=identifier,
-        otp=request.otp.strip(),
-        purpose="forgot_password",
+    # OTP is always associated with registered mobile
+    verified = await otp_service.verify_otp(
+        "forgot_password",
+        user.mobile,
+        request.otp.strip(),
     )
 
     if not verified:
@@ -503,7 +707,20 @@ def forgot_password_reset(
             detail="Invalid or expired OTP",
         )
 
-    user.password_hash = hash_password(request.new_password)
+    user.password_hash = hash_password(
+        request.new_password
+    )
+
+    old_sessions = (
+        db.query(UserSession)
+        .filter(UserSession.user_id == user.id)
+        .all()
+    )
+
+    for old_session in old_sessions:
+        await session_service.delete_session(
+            old_session.session_token
+        )
 
     db.query(UserSession).filter(
         UserSession.user_id == user.id

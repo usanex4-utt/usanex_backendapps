@@ -1273,7 +1273,7 @@ def remove_personal_category(
 # ============================================================
 
 @router.get("")
-def get_connections(
+async def get_connections(
     request: Request,
     db: Session = Depends(get_db),
 ):

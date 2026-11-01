@@ -1,3 +1,4 @@
+
 # =========================================================
 # USANEX — FASTAPI APPLICATION ENTRY POINT
 # =========================================================
@@ -9,11 +10,34 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
 
-# Import models so SQLAlchemy registers all tables
+# =========================================================
+# DATABASE IMPORTS
+# =========================================================
+
 from .database.database import engine, Base
-from .database import models  # noqa: F401  (registers User, Reel, ...)
-from .database import couple_models  # noqa: F401  (registers couple tables)
+from .database import models  # noqa: F401
+from .database import couple_models  # noqa: F401
 from .database.migrate import run_migrations
+
+# =========================================================
+# REDIS IMPORTS
+# =========================================================
+
+from .core.redis_client import (
+    init_redis,
+    close_redis,
+    ping_redis,
+)
+
+# =========================================================
+# WEBSOCKET REDIS MANAGER
+# =========================================================
+
+from .websocket.redis_manager import redis_ws_manager
+
+# =========================================================
+# ROUTER IMPORTS
+# =========================================================
 
 from .routes import (
     auth,
@@ -28,19 +52,83 @@ from .routes import (
 )
 
 
+# =========================================================
+# APPLICATION LIFESPAN
+# =========================================================
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1) Create any new tables
+
+    print("[Usanex] Starting application...")
+
+    # -----------------------------------------------------
+    # 1. DATABASE SETUP
+    # -----------------------------------------------------
+
     Base.metadata.create_all(bind=engine)
 
-    # 2) Add missing columns on existing tables (safe, non-destructive)
+    # -----------------------------------------------------
+    # 2. DATABASE MIGRATIONS
+    # -----------------------------------------------------
+
+    run_migrations()
+
+    print("[Usanex] Database migrations completed")
+
+    # -----------------------------------------------------
+    # 3. REDIS INITIALIZATION
+    # -----------------------------------------------------
+
+    init_redis()
+
+    # -----------------------------------------------------
+    # 4. REDIS HEALTH CHECK
+    # -----------------------------------------------------
+
+    if not await ping_redis():
+        raise RuntimeError("Redis is not reachable!")
+
+    print("[Usanex] Redis Connected successfully")
+
+    # -----------------------------------------------------
+    # 5. START WEBSOCKET REDIS MANAGER
+    # -----------------------------------------------------
+
+    await redis_ws_manager.start()
+
+    print("[Usanex] WebSocket Redis Manager started")
+
+    # -----------------------------------------------------
+    # APPLICATION RUNNING
+    # -----------------------------------------------------
+
     try:
-        run_migrations()
-    except Exception as exc:  # pragma: no cover
-        print(f"[Usanex] Migration warning: {exc}")
+        yield
 
-    yield
+    finally:
 
+        # -------------------------------------------------
+        # 6. STOP WEBSOCKET REDIS MANAGER
+        # -------------------------------------------------
+
+        print("[Usanex] Stopping WebSocket Redis Manager...")
+
+        await redis_ws_manager.stop()
+
+        # -------------------------------------------------
+        # 7. CLOSE REDIS CONNECTION
+        # -------------------------------------------------
+
+        await close_redis()
+
+        print("[Usanex] Redis Disconnected")
+
+        print("[Usanex] Shutdown complete")
+
+
+# =========================================================
+# FASTAPI APPLICATION
+# =========================================================
 
 app = FastAPI(
     title="Usanex API",
@@ -52,7 +140,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ----- CORS -----
+
+# =========================================================
+# CORS CONFIGURATION
+# =========================================================
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
@@ -61,7 +153,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ----- Router registration -----
+
+# =========================================================
+# ROUTER REGISTRATION
+# =========================================================
+
 app.include_router(auth.router)
 app.include_router(ai_assistant.router)
 app.include_router(chat.router)
@@ -73,9 +169,13 @@ app.include_router(search.router)
 app.include_router(users.router)
 
 
-# ----- Root / Health -----
+# =========================================================
+# ROOT ENDPOINT
+# =========================================================
+
 @app.get("/", tags=["Root"])
 def root():
+
     return {
         "app": "Usanex API",
         "status": "online",
@@ -84,6 +184,21 @@ def root():
     }
 
 
+# =========================================================
+# HEALTH CHECK
+# =========================================================
+
 @app.get("/health", tags=["Health"])
-def health():
-    return {"status": "ok"}
+async def health():
+
+    redis_status = await ping_redis()
+
+    return {
+        "status": "ok",
+        "database": "configured",
+        "redis": (
+            "connected"
+            if redis_status
+            else "disconnected"
+        ),
+    }

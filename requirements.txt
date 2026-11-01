@@ -7,3 +7,4 @@ pydantic>=2.0
 argon2-cffi>=23.1
 cloudinary>=1.40
 python-multipart>=0.0.9
+redis>=5.0

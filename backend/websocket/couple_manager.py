@@ -1,123 +1,44 @@
-# =========================================================
-# USANEX — COUPLE WEBSOCKET CONNECTION MANAGER
-# =========================================================
-
-import time
-from typing import Optional
-
+# backend/websocket/couple_manager.py
+import logging
 from fastapi import WebSocket
+from backend.services.redis import presence_service
+from .redis_manager import redis_ws_manager
+
+logger = logging.getLogger(__name__)
 
 
-class CoupleConnectionManager:
-    def __init__(self) -> None:
-        self._connections: dict[int, set[WebSocket]] = {}
-        self._heartbeats: dict[WebSocket, float] = {}
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: dict[int, WebSocket] = {}
+        # Register callback (but don't start listener yet)
+        redis_ws_manager.set_callback(self._handle_redis_message)
 
-    # --------------------------------------------------
-    # Lifecycle
-    # --------------------------------------------------
-
-    async def connect(
-        self,
-        user_id: int,
-        websocket: WebSocket,
-    ) -> None:
-        await websocket.accept()
-        self._connections.setdefault(user_id, set()).add(websocket)
-        self._heartbeats[websocket] = time.time()
-
-    async def disconnect(
-        self,
-        user_id: int,
-        websocket: WebSocket,
-    ) -> None:
-        sockets = self._connections.get(user_id)
-        if sockets is not None:
-            sockets.discard(websocket)
-            if not sockets:
-                self._connections.pop(user_id, None)
-        self._heartbeats.pop(websocket, None)
-
-    # --------------------------------------------------
-    # Online check
-    # --------------------------------------------------
-
-    def is_online(self, user_id: int) -> bool:
-        return bool(self._connections.get(user_id))
-
-    # --------------------------------------------------
-    # Delivery
-    # --------------------------------------------------
-
-    async def send_to_user(
-        self,
-        user_id: int,
-        event: dict,
-    ) -> bool:
-        sockets = list(self._connections.get(user_id, set()))
-        delivered = False
-
-        for ws in sockets:
+    async def _handle_redis_message(self, data: dict):
+        receiver_id = data.get("receiver_id")
+        if receiver_id in self.active_connections:
+            ws = self.active_connections[receiver_id]
             try:
-                await ws.send_json(event)
-                delivered = True
-            except Exception:
-                self._connections.get(user_id, set()).discard(ws)
-                self._heartbeats.pop(ws, None)
+                await ws.send_json(data.get("payload"))
+            except Exception as e:
+                logger.error(f"WS send error: {e}")
 
-        return delivered
+    async def connect(self, websocket: WebSocket, user_id: int):
+        await websocket.accept()
+        self.active_connections[user_id] = websocket
+        await presence_service.set_online(user_id)
 
-    # --------------------------------------------------
-    # Typed events
-    # --------------------------------------------------
+    async def disconnect(self, user_id: int):
+        if user_id in self.active_connections:
+            del self.active_connections[user_id]
+        await presence_service.set_offline(user_id)
 
-    async def send_presence(
-        self,
-        receiver_id: int,
-        user_id: int,
-        is_online: bool,
-        last_seen: Optional[str],
-    ) -> None:
-        await self.send_to_user(
-            receiver_id,
-            {
-                "type": "presence",
-                "user_id": user_id,
-                "is_online": is_online,
-                "last_seen": last_seen,
-            },
-        )
-
-    async def send_typing(
-        self,
-        sender_id: int,
-        receiver_id: int,
-        is_typing: bool,
-    ) -> None:
-        await self.send_to_user(
-            receiver_id,
-            {
-                "type": "typing",
-                "user_id": sender_id,
-                "typing": is_typing,
-            },
-        )
-
-    # --------------------------------------------------
-    # Heartbeat
-    # --------------------------------------------------
-
-    async def touch(self, websocket: WebSocket) -> None:
-        self._heartbeats[websocket] = time.time()
-
-    def heartbeat_age(
-        self,
-        websocket: WebSocket,
-    ) -> Optional[float]:
-        last = self._heartbeats.get(websocket)
-        if last is None:
-            return None
-        return time.time() - last
+    async def send_personal_message(self, user_id: int, message: dict):
+        if user_id in self.active_connections:
+            await self.active_connections[user_id].send_json(message)
+        await redis_ws_manager.publish({
+            "receiver_id": user_id,
+            "payload": message
+        })
 
 
-couple_manager = CoupleConnectionManager()
+couple_manager = ConnectionManager()
