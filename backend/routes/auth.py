@@ -1,4 +1,3 @@
-
 # =========================================================
 # USANEX — AUTHENTICATION ROUTES
 # File: backend/routes/auth.py
@@ -27,10 +26,10 @@ from ..services.auth_service import (
     verify_password,
 )
 
-from ..services.otp_service import create_otp, verify_otp
+from ..services.otp_service import create_otp, verify_otp  # noqa: F401 (DB OTP kept for back-compat)
 
 # Redis services
-from ..services.redis import session_service, otp_service
+from ..services.redis import session_service, otp_service, rate_limit
 
 
 router = APIRouter(
@@ -143,6 +142,9 @@ async def get_valid_session(
     if session is None:
         return None
 
+    if not getattr(session, "is_active", True):
+        return None
+
     expires_at = session.expires_at
 
     if expires_at.tzinfo is None:
@@ -205,11 +207,19 @@ async def get_current_user_from_request(
     else:
         user_id = session.user_id
 
-    return (
+    user = (
         db.query(User)
         .filter(User.id == user_id)
         .first()
     )
+
+    if user is not None and not getattr(user, "is_active", True):
+        raise HTTPException(
+            status_code=403,
+            detail="This account is inactive.",
+        )
+
+    return user
 
 
 # =========================================================
@@ -251,6 +261,14 @@ async def register_send_otp(
             detail="Name and mobile are required",
         )
 
+    allowed, _ = await rate_limit.hit("otp_register", mobile, limit=5, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("otp_register", mobile)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many OTP requests. Retry in {ttl}s.",
+        )
+
     existing_user = (
         db.query(User)
         .filter(User.mobile == mobile)
@@ -263,7 +281,6 @@ async def register_send_otp(
             detail="Mobile number is already registered",
         )
 
-    # Generate OTP in Redis
     otp = await otp_service.generate_otp(
         "register",
         mobile,
@@ -297,6 +314,14 @@ async def register_verify(
     name = request.name.strip()
     mobile = request.mobile.strip()
 
+    allowed, _ = await rate_limit.hit("otp_register_verify", mobile, limit=10, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("otp_register_verify", mobile)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many verification attempts. Retry in {ttl}s.",
+        )
+
     existing_user = (
         db.query(User)
         .filter(User.mobile == mobile)
@@ -309,7 +334,6 @@ async def register_verify(
             detail="Mobile number is already registered",
         )
 
-    # Verify Redis OTP
     verified = await otp_service.verify_otp(
         "register",
         mobile,
@@ -354,7 +378,6 @@ async def register_verify(
     db.commit()
     db.refresh(new_user)
 
-    # Automatically login after registration
     session_token = await create_authenticated_session(
         db,
         new_user.id,
@@ -386,6 +409,14 @@ async def login(
 ):
     identifier = request.identifier.strip()
 
+    allowed, _ = await rate_limit.hit("login", identifier, limit=10, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("login", identifier)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many login attempts. Retry in {ttl}s.",
+        )
+
     user = (
         db.query(User)
         .filter(
@@ -402,6 +433,12 @@ async def login(
         raise HTTPException(
             status_code=401,
             detail="Invalid username/mobile or password",
+        )
+
+    if not getattr(user, "is_active", True):
+        raise HTTPException(
+            status_code=403,
+            detail="This account is inactive.",
         )
 
     # Invalidate previous sessions
@@ -451,6 +488,14 @@ async def send_otp(
 ):
     mobile = request.mobile.strip()
 
+    allowed, _ = await rate_limit.hit("otp_login", mobile, limit=5, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("otp_login", mobile)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many OTP requests. Retry in {ttl}s.",
+        )
+
     user = (
         db.query(User)
         .filter(User.mobile == mobile)
@@ -467,9 +512,6 @@ async def send_otp(
         "login",
         mobile,
     )
-
-    # TODO: Integrate SMS provider here.
-    # Never print OTP in production logs.
 
     return {
         "success": True,
@@ -495,6 +537,14 @@ async def login_with_otp(
 ):
     mobile = request.mobile.strip()
 
+    allowed, _ = await rate_limit.hit("otp_login_verify", mobile, limit=10, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("otp_login_verify", mobile)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many verification attempts. Retry in {ttl}s.",
+        )
+
     verified = await otp_service.verify_otp(
         "login",
         mobile,
@@ -517,6 +567,12 @@ async def login_with_otp(
         raise HTTPException(
             status_code=404,
             detail="Account not found",
+        )
+
+    if not getattr(user, "is_active", True):
+        raise HTTPException(
+            status_code=403,
+            detail="This account is inactive.",
         )
 
     session_token = await create_authenticated_session(
@@ -594,7 +650,6 @@ async def logout(
             db.delete(session)
             db.commit()
 
-        # Remove Redis cache
         await session_service.delete_session(
             session_token
         )
@@ -627,6 +682,14 @@ async def forgot_password_send_otp(
     db: Session = Depends(get_db),
 ):
     identifier = request.identifier.strip()
+
+    allowed, _ = await rate_limit.hit("otp_forgot", identifier, limit=5, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("otp_forgot", identifier)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many OTP requests. Retry in {ttl}s.",
+        )
 
     user = (
         db.query(User)
@@ -673,6 +736,14 @@ async def forgot_password_reset(
 ):
     identifier = request.identifier.strip()
 
+    allowed, _ = await rate_limit.hit("pwd_reset", identifier, limit=10, window_seconds=60)
+    if not allowed:
+        ttl = await rate_limit.retry_after("pwd_reset", identifier)
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many reset attempts. Retry in {ttl}s.",
+        )
+
     if request.new_password != request.confirm_password:
         raise HTTPException(
             status_code=400,
@@ -694,7 +765,6 @@ async def forgot_password_reset(
             detail="Account not found",
         )
 
-    # OTP is always associated with registered mobile
     verified = await otp_service.verify_otp(
         "forgot_password",
         user.mobile,

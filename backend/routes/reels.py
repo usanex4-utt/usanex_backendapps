@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 import tempfile
@@ -25,6 +26,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from ..core.redis_client import get_redis
 from ..database.database import get_db
 from ..database.models import (
     User,
@@ -39,8 +41,9 @@ from ..database.models import (
     ReelRating,
     ReelInteraction,
     UserReelHistory,
-    ReelAIFeature,  # ✅ Added missing import
+    ReelAIFeature,
 )
+from ..services.redis import session_service
 
 # =========================================================
 # ROUTER
@@ -80,6 +83,9 @@ ALLOWED_VIDEO_EXTENSIONS = {
     ".mkv",
 }
 
+FEED_CACHE_TTL = 30
+FEED_CACHE_PATTERN = "usanex:reels:feed:*"
+
 # =========================================================
 # CLOUDINARY
 # =========================================================
@@ -109,7 +115,9 @@ def configure_cloudinary() -> bool:
     except Exception:
         return False
 
+
 CLOUDINARY_CONFIGURED = configure_cloudinary()
+
 
 def cloudinary_ready() -> bool:
     global CLOUDINARY_CONFIGURED
@@ -118,6 +126,17 @@ def cloudinary_ready() -> bool:
     CLOUDINARY_CONFIGURED = configure_cloudinary()
     return CLOUDINARY_CONFIGURED
 
+
+async def invalidate_feed_cache() -> None:
+    """Best-effort: clear all cached feed pages."""
+    try:
+        r = get_redis()
+        async for key in r.scan_iter(match=FEED_CACHE_PATTERN, count=200):
+            await r.delete(key)
+    except Exception:
+        pass
+
+
 # =========================================================
 # TIME
 # =========================================================
@@ -125,11 +144,12 @@ def cloudinary_ready() -> bool:
 def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
+
 # =========================================================
-# AUTH
+# AUTH (Redis-first)
 # =========================================================
 
-def get_current_user(
+async def get_current_user(
     request: Request,
     db: Session = Depends(get_db),
 ) -> User:
@@ -145,8 +165,25 @@ def get_current_user(
     if not token:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
+    cached = await session_service.get_session(token)
+    if cached:
+        user = (
+            db.query(User)
+            .filter(User.id == cached.get("user_id"))
+            .first()
+        )
+        if user is None:
+            await session_service.delete_session(token, cached.get("user_id"))
+            raise HTTPException(status_code=401, detail="User not found")
+        if not getattr(user, "is_active", True):
+            raise HTTPException(status_code=403, detail="Inactive account")
+        return user
+
     session = db.query(UserSession).filter(UserSession.session_token == token).first()
     if session is None:
+        raise HTTPException(status_code=401, detail="Invalid session")
+
+    if not getattr(session, "is_active", True):
         raise HTTPException(status_code=401, detail="Invalid session")
 
     expires_at = session.expires_at
@@ -161,6 +198,7 @@ def get_current_user(
     if utc_now() >= expires_at:
         db.delete(session)
         db.commit()
+        await session_service.delete_session(token, session.user_id)
         raise HTTPException(status_code=401, detail="Session expired")
 
     user = db.query(User).filter(User.id == session.user_id).first()
@@ -169,7 +207,14 @@ def get_current_user(
         db.commit()
         raise HTTPException(status_code=401, detail="User not found")
 
+    if not getattr(user, "is_active", True):
+        raise HTTPException(status_code=403, detail="Inactive account")
+
+    expires_at_aware = expires_at.replace(tzinfo=timezone.utc)
+    await session_service.cache_session(token, user.id, expires_at_aware)
+
     return user
+
 
 # =========================================================
 # SERIALIZATION
@@ -185,6 +230,7 @@ def serialize_user(user: Optional[User]) -> Optional[dict[str, Any]]:
         "name": user.name,
         "profile_photo": user.profile_photo,
     }
+
 
 def serialize_reel(reel: Reel, creator: Optional[User] = None) -> dict[str, Any]:
     return {
@@ -224,6 +270,7 @@ def serialize_reel(reel: Reel, creator: Optional[User] = None) -> dict[str, Any]
         "creator": serialize_user(creator),
     }
 
+
 # =========================================================
 # REQUEST MODELS
 # =========================================================
@@ -238,19 +285,24 @@ class WatchEventRequest(BaseModel):
     feed_position: Optional[int] = Field(default=None, ge=0, le=10000)
     source: Optional[str] = Field(default=None, max_length=50)
 
+
 class RatingRequest(BaseModel):
     rating: int = Field(ge=1, le=3)
 
+
 class ShareRequest(BaseModel):
     share_type: Optional[str] = Field(default=None, max_length=50)
+
 
 class CommentRequest(BaseModel):
     content: str = Field(min_length=1, max_length=MAX_COMMENT_LENGTH)
     parent_comment_id: Optional[int] = None
 
+
 class ReportRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=MAX_REPORT_DESCRIPTION)
+
 
 # =========================================================
 # HELPERS
@@ -262,14 +314,17 @@ def get_reel_or_404(db: Session, reel_id: int) -> Reel:
         raise HTTPException(status_code=404, detail="Reel not found")
     return reel
 
+
 def get_creator(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
+
 
 def ensure_reel_access(reel: Reel, current_user: User) -> None:
     if reel.user_id == current_user.id:
         return
     if reel.visibility != "public" or reel.status != "published" or not getattr(reel, "is_safe", True):
         raise HTTPException(status_code=404, detail="Reel not found")
+
 
 def create_interaction(db: Session, *, user_id: int, reel: Reel, event_type: str, **kwargs) -> ReelInteraction:
     now = utc_now()
@@ -285,6 +340,7 @@ def create_interaction(db: Session, *, user_id: int, reel: Reel, event_type: str
     db.add(interaction)
     db.flush()
     return interaction
+
 
 def update_reel_history(db: Session, user_id: int, reel: Reel, watch_time: float, watch_percentage: float, completed: bool, replay_count: int) -> tuple[UserReelHistory, bool]:
     history = db.query(UserReelHistory).filter(
@@ -318,6 +374,7 @@ def update_reel_history(db: Session, user_id: int, reel: Reel, watch_time: float
     history.replay_count = (history.replay_count or 0) + replay_count
     return history, False
 
+
 def normalize_optional_text(value: Optional[str], max_length: int) -> Optional[str]:
     if value is None:
         return None
@@ -326,6 +383,7 @@ def normalize_optional_text(value: Optional[str], max_length: int) -> Optional[s
         return None
     return value[:max_length]
 
+
 def delete_cloudinary_video(public_id: Optional[str]) -> None:
     if not public_id or not cloudinary_ready():
         return
@@ -333,6 +391,7 @@ def delete_cloudinary_video(public_id: Optional[str]) -> None:
         cloudinary.uploader.destroy(public_id, resource_type="video", invalidate=True)
     except Exception:
         pass
+
 
 # =========================================================
 # HEALTH
@@ -348,17 +407,44 @@ def reels_health():
         "cloudinary_configured": cloudinary_ready(),
     }
 
+
 # =========================================================
-# FEED
+# SERVICE STATUS (moved above /{reel_id} to avoid shadow)
+# =========================================================
+
+@router.get("/service/status")
+def service_status():
+    return {
+        "success": True,
+        "service": "Usanex Reels",
+        "status": "online",
+        "storage": "Cloudinary",
+        "cloudinary_configured": cloudinary_ready(),
+    }
+
+
+# =========================================================
+# FEED (30s Redis cache)
 # =========================================================
 
 @router.get("/feed")
-def get_reels_feed(
+async def get_reels_feed(
     limit: int = Query(DEFAULT_FEED_LIMIT, ge=1, le=MAX_FEED_LIMIT),
     cursor: Optional[int] = Query(default=None, ge=1),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    cache_key = f"usanex:reels:feed:{limit}:{cursor or 0}"
+
+    try:
+        cached = await get_redis().get(cache_key)
+        if cached:
+            if isinstance(cached, bytes):
+                cached = cached.decode("utf-8")
+            return json.loads(cached)
+    except Exception:
+        pass
+
     query = db.query(Reel).filter(
         Reel.visibility == "public",
         Reel.status == "published",
@@ -370,8 +456,15 @@ def get_reels_feed(
     reels_db = query.order_by(Reel.id.desc()).limit(limit).all()
     reels = [serialize_reel(reel, get_creator(db, reel.user_id)) for reel in reels_db]
     next_cursor = reels_db[-1].id if reels_db else None
+    response = {"success": True, "reels": reels, "count": len(reels), "next_cursor": next_cursor}
 
-    return {"success": True, "reels": reels, "count": len(reels), "next_cursor": next_cursor}
+    try:
+        await get_redis().set(cache_key, json.dumps(response, default=str), ex=FEED_CACHE_TTL)
+    except Exception:
+        pass
+
+    return response
+
 
 # =========================================================
 # MY REELS
@@ -391,6 +484,7 @@ def get_my_reels(
         "count": len(reels_db),
         "owner": serialize_user(current_user),
     }
+
 
 # =========================================================
 # USER REELS
@@ -422,6 +516,7 @@ def get_user_reels(
         "owner": serialize_user(profile_user),
     }
 
+
 # =========================================================
 # SAVED REELS
 # =========================================================
@@ -440,6 +535,7 @@ def get_saved_reels(
         if reel:
             reels.append(serialize_reel(reel, get_creator(db, reel.user_id)))
     return {"success": True, "reels": reels, "count": len(reels)}
+
 
 # =========================================================
 # UPLOAD REEL
@@ -548,6 +644,8 @@ async def upload_reel(
         db.commit()
         db.refresh(reel)
 
+        await invalidate_feed_cache()
+
         return {"success": True, "message": "Reel uploaded successfully", "storage": "cloudinary", "cloudinary_public_id": cloudinary_public_id, "reel": serialize_reel(reel, current_user)}
 
     except HTTPException:
@@ -567,6 +665,7 @@ async def upload_reel(
         try: await video.close()
         except Exception: pass
 
+
 # =========================================================
 # SINGLE REEL
 # =========================================================
@@ -576,6 +675,7 @@ def get_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = D
     reel = get_reel_or_404(db, reel_id)
     ensure_reel_access(reel, current_user)
     return {"success": True, "reel": serialize_reel(reel, get_creator(db, reel.user_id))}
+
 
 # =========================================================
 # WATCH
@@ -609,8 +709,9 @@ def watch_reel(reel_id: int, payload: WatchEventRequest, db: Session = Depends(g
 
     return {"success": True, "interaction_id": interaction.id, "is_unique_view": is_unique_view, "views_count": reel.views_count, "unique_views_count": reel.unique_views_count, "completed_views_count": reel.completed_views_count, "replay_count": reel.replay_count}
 
+
 # =========================================================
-# RATING (LIKE / UNLIKE)
+# RATING
 # =========================================================
 
 @router.post("/{reel_id}/rating")
@@ -643,6 +744,7 @@ def rate_reel(reel_id: int, payload: RatingRequest, db: Session = Depends(get_db
 
     return {"success": True, "rating": payload.rating, "one_star_count": reel.one_star_count, "two_star_count": reel.two_star_count, "three_star_count": reel.three_star_count, "interaction_id": interaction.id}
 
+
 @router.delete("/{reel_id}/rating")
 def unrate_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
@@ -658,6 +760,7 @@ def unrate_reel(reel_id: int, db: Session = Depends(get_db), current_user: User 
         db.commit()
 
     return {"success": True, "rating": None, "one_star_count": reel.one_star_count or 0, "two_star_count": reel.two_star_count or 0, "three_star_count": reel.three_star_count or 0}
+
 
 # =========================================================
 # SAVE
@@ -678,6 +781,7 @@ def save_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = 
     db.commit()
     return {"success": True, "saved": True, "save_count": reel.save_count, "interaction_id": interaction.id}
 
+
 @router.delete("/{reel_id}/save")
 def unsave_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
@@ -693,12 +797,14 @@ def unsave_reel(reel_id: int, db: Session = Depends(get_db), current_user: User 
     db.commit()
     return {"success": True, "saved": False, "save_count": reel.save_count, "interaction_id": interaction.id}
 
+
 @router.get("/{reel_id}/saved")
 def saved_status(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
     ensure_reel_access(reel, current_user)
     saved = db.query(ReelSave).filter(ReelSave.user_id == current_user.id, ReelSave.reel_id == reel_id).first()
     return {"success": True, "saved": saved is not None}
+
 
 # =========================================================
 # DOWNLOAD & SHARE
@@ -714,6 +820,7 @@ def download_reel(reel_id: int, db: Session = Depends(get_db), current_user: Use
     db.commit()
     return {"success": True, "download_count": reel.download_count, "video_url": reel.video_url, "interaction_id": interaction.id}
 
+
 @router.post("/{reel_id}/share")
 def share_reel(reel_id: int, payload: ShareRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
@@ -724,6 +831,7 @@ def share_reel(reel_id: int, payload: ShareRequest, db: Session = Depends(get_db
     interaction = create_interaction(db, user_id=current_user.id, reel=reel, event_type="share", shared=True)
     db.commit()
     return {"success": True, "share_count": reel.share_count, "interaction_id": interaction.id}
+
 
 # =========================================================
 # INTERESTED / NOT INTERESTED
@@ -759,13 +867,16 @@ def _set_reel_interest(reel_id: int, interested_choice: bool, db: Session, curre
     db.commit()
     return {"success": True, "interested": interested_choice, "not_interested": not interested_choice, "interested_count": reel.interested_count or 0, "not_interested_count": reel.not_interested_count or 0, "interaction_id": interaction.id}
 
+
 @router.post("/{reel_id}/interested")
 def mark_interested(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _set_reel_interest(reel_id, True, db, current_user)
 
+
 @router.post("/{reel_id}/not-interested")
 def mark_not_interested(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     return _set_reel_interest(reel_id, False, db, current_user)
+
 
 # =========================================================
 # COMMENTS
@@ -792,6 +903,7 @@ def add_comment(reel_id: int, payload: CommentRequest, db: Session = Depends(get
 
     return {"success": True, "comment": {"id": comment.id, "user_id": comment.user_id, "reel_id": comment.reel_id, "content": comment.content, "created_at": comment.created_at.isoformat() if comment.created_at else None, "user": serialize_user(current_user)}, "interaction_id": interaction.id}
 
+
 @router.get("/{reel_id}/comments")
 def get_comments(reel_id: int, limit: int = Query(50, ge=1, le=100), offset: int = Query(0, ge=0), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
@@ -799,7 +911,7 @@ def get_comments(reel_id: int, limit: int = Query(50, ge=1, le=100), offset: int
 
     comments = db.query(ReelComment).filter(ReelComment.reel_id == reel_id, ReelComment.is_deleted.is_(False)).order_by(ReelComment.created_at.desc(), ReelComment.id.desc()).offset(offset).limit(limit).all()
     response = []
-    
+
     for comment in comments:
         user = get_creator(db, comment.user_id)
         likes_count = db.query(ReelCommentLike).filter(ReelCommentLike.comment_id == comment.id).count()
@@ -818,11 +930,12 @@ def get_comments(reel_id: int, limit: int = Query(50, ge=1, le=100), offset: int
 
     return {"success": True, "comments": response, "count": len(response), "limit": limit, "offset": offset}
 
+
 @router.post("/comments/{comment_id}/like")
 def toggle_comment_like(comment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     comment = db.query(ReelComment).filter(ReelComment.id == comment_id, ReelComment.is_deleted.is_(False)).first()
     if comment is None: raise HTTPException(status_code=404, detail="Comment not found")
-    
+
     reel = get_reel_or_404(db, comment.reel_id)
     ensure_reel_access(reel, current_user)
 
@@ -838,11 +951,12 @@ def toggle_comment_like(comment_id: int, db: Session = Depends(get_db), current_
     likes_count = db.query(ReelCommentLike).filter(ReelCommentLike.comment_id == comment_id).count()
     return {"success": True, "comment_id": comment_id, "liked": liked, "likes_count": likes_count}
 
+
 @router.delete("/{reel_id}/comments/{comment_id}")
 def delete_comment(reel_id: int, comment_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
     comment = db.query(ReelComment).filter(ReelComment.id == comment_id, ReelComment.reel_id == reel_id).first()
-    
+
     if comment is None: raise HTTPException(status_code=404, detail="Comment not found")
     if comment.user_id != current_user.id: raise HTTPException(status_code=403, detail="You can delete only your own comment")
     if comment.is_deleted: return {"success": True, "message": "Comment already deleted"}
@@ -852,6 +966,7 @@ def delete_comment(reel_id: int, comment_id: int, db: Session = Depends(get_db),
     interaction = create_interaction(db, user_id=current_user.id, reel=reel, event_type="comment_delete")
     db.commit()
     return {"success": True, "message": "Comment deleted successfully", "comment_id": comment.id, "comment_count": reel.comment_count, "interaction_id": interaction.id}
+
 
 # =========================================================
 # REPORT & DELETE
@@ -872,8 +987,9 @@ def report_reel(reel_id: int, payload: ReportRequest, db: Session = Depends(get_
     db.commit()
     return {"success": True, "message": "Reel reported successfully", "report_id": report.id, "interaction_id": interaction.id}
 
+
 @router.delete("/{reel_id}")
-def delete_my_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def delete_my_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
     if reel.user_id != current_user.id: raise HTTPException(status_code=403, detail="You can delete only your own reel")
 
@@ -892,7 +1008,11 @@ def delete_my_reel(reel_id: int, db: Session = Depends(get_db), current_user: Us
     reel.status = "deleted"
     reel.updated_at = utc_now()
     db.commit()
+
+    await invalidate_feed_cache()
+
     return {"success": True, "message": "Reel deleted successfully", "cloudinary_deleted": cloudinary_delete_error is None}
+
 
 # =========================================================
 # REEL STATUS & AI STATUS
@@ -917,6 +1037,7 @@ def reel_status(reel_id: int, db: Session = Depends(get_db), current_user: User 
         "not_interested": not_interested,
     }
 
+
 @router.get("/{reel_id}/ai-status")
 def reel_ai_status(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     reel = get_reel_or_404(db, reel_id)
@@ -934,7 +1055,3 @@ def reel_ai_status(reel_id: int, db: Session = Depends(get_db), current_user: Us
         "is_safe": bool(reel.is_safe),
         "ai_feature": {"id": ai_feature.id, "feature_type": getattr(ai_feature, "feature_type", None), "feature_value": getattr(ai_feature, "feature_value", None)} if ai_feature else None,
     }
-
-@router.get("/service/status")
-def service_status():
-    return {"success": True, "service": "Usanex Reels", "status": "online", "storage": "Cloudinary", "cloudinary_configured": cloudinary_ready()}

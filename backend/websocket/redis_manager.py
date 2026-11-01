@@ -3,6 +3,7 @@ import json
 import asyncio
 import logging
 from typing import Callable, Awaitable, Optional
+
 from backend.core.redis_client import get_redis
 
 logger = logging.getLogger(__name__)
@@ -13,18 +14,33 @@ class RedisPubSubManager:
         self.channel = "usanex:ws:broadcast"
         self.pubsub = None
         self._listen_task: Optional[asyncio.Task] = None
-        self._callback: Optional[Callable[[dict], Awaitable[None]]] = None
+        self._callbacks: dict[str, Callable[[dict], Awaitable[None]]] = {}
         self._running = False
 
+    # -----------------------------------------------------
+    # Registration
+    # -----------------------------------------------------
+    def register(self, scope: str, callback: Callable[[dict], Awaitable[None]]):
+        """Register a callback for a scope (e.g. 'couple', 'chat')."""
+        self._callbacks[scope] = callback
+
     def set_callback(self, callback: Callable[[dict], Awaitable[None]]):
-        """Set callback to handle incoming messages."""
-        self._callback = callback
+        """Deprecated: use register(scope, callback). Defaults to 'broadcast'."""
+        self.register("broadcast", callback)
 
-    async def publish(self, message: dict):
-        """Broadcast a message to all connected workers."""
+    # -----------------------------------------------------
+    # Publish
+    # -----------------------------------------------------
+    async def publish(self, message: dict, scope: str = "broadcast"):
+        """Broadcast a message to all connected workers in a scope."""
         r = get_redis()
-        await r.publish(self.channel, json.dumps(message))
+        payload = dict(message)
+        payload["scope"] = scope
+        await r.publish(self.channel, json.dumps(payload))
 
+    # -----------------------------------------------------
+    # Lifecycle
+    # -----------------------------------------------------
     async def start(self):
         """Start the listener. Called from lifespan AFTER init_redis()."""
         if self._running:
@@ -41,20 +57,32 @@ class RedisPubSubManager:
 
         try:
             async for message in self.pubsub.listen():
-                if message["type"] == "message":
-                    try:
-                        data = json.loads(message["data"])
-                        if self._callback:
-                            await self._callback(data)
-                    except Exception as e:
-                        logger.error(f"WS message handler error: {e}")
+                if message["type"] != "message":
+                    continue
+                try:
+                    data = json.loads(message["data"])
+                except (json.JSONDecodeError, TypeError):
+                    continue
+
+                scope = data.get("scope", "broadcast")
+                cb = self._callbacks.get(scope)
+                if cb is None:
+                    continue
+                try:
+                    await cb(data)
+                except Exception as e:
+                    logger.error(f"WS {scope} callback error: {e}")
         except asyncio.CancelledError:
             logger.info("Redis WS listener cancelled")
+            raise
         except Exception as e:
             logger.error(f"Redis WS listener error: {e}")
         finally:
             if self.pubsub:
-                await self.pubsub.unsubscribe(self.channel)
+                try:
+                    await self.pubsub.unsubscribe(self.channel)
+                except Exception:
+                    pass
 
     async def stop(self):
         """Stop the listener."""
