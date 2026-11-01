@@ -147,7 +147,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins_list,
+    allow_origins=["https://uxanexapps.vercel.app"], # Hardcode karke test karein
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -189,16 +189,5 @@ def root():
 # =========================================================
 
 @app.get("/health", tags=["Health"])
-async def health():
-
-    redis_status = await ping_redis()
-
-    return {
-        "status": "ok",
-        "database": "configured",
-        "redis": (
-            "connected"
-            if redis_status
-            else "disconnected"
-        ),
-    }
+def health():
+    return {"status": "ok"}
