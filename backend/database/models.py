@@ -2222,3 +2222,29 @@ class ChatMessage(Base):
             "created_at",
         ),
     )
+# =========================================================
+# USER STATUS (Stories)
+# =========================================================
+
+class UserStatus(Base):
+    __tablename__ = "user_statuses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True, nullable=False)
+    media_url = Column(String(1000), nullable=False)
+    media_type = Column(String(30), default="image") # image or video
+    caption = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False) # 24 hours later
+
+class StatusView(Base):
+    __tablename__ = "status_views"
+
+    id = Column(Integer, primary_key=True, index=True)
+    status_id = Column(Integer, index=True, nullable=False)
+    viewer_id = Column(Integer, index=True, nullable=False)
+    viewed_at = Column(DateTime, default=utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("status_id", "viewer_id", name="uq_status_view"),
+    )

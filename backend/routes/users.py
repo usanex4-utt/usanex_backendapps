@@ -219,7 +219,7 @@ def get_following_count(
 # =========================================================
 
 @router.post("/{user_id}/follow")
-def follow_user(
+async def follow_user(
     user_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -228,7 +228,7 @@ def follow_user(
     Follow another Usanex user.
     """
 
-    current_user = get_current_user_from_request(
+    current_user = await get_current_user_from_request(
         request=request,
         db=db,
     )
@@ -338,7 +338,7 @@ def follow_user(
 # =========================================================
 
 @router.delete("/{user_id}/follow")
-def unfollow_user(
+async def unfollow_user(
     user_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -347,7 +347,7 @@ def unfollow_user(
     Unfollow another Usanex user.
     """
 
-    current_user = get_current_user_from_request(
+    current_user = await get_current_user_from_request(
         request=request,
         db=db,
     )
@@ -443,7 +443,7 @@ def unfollow_user(
 # =========================================================
 
 @router.get("/{user_id}/follow-status")
-def follow_status(
+async def follow_status(
     user_id: str,
     request: Request,
     db: Session = Depends(get_db),
@@ -453,7 +453,7 @@ def follow_status(
     and target user.
     """
 
-    current_user = get_current_user_from_request(
+    current_user = await get_current_user_from_request(
         request=request,
         db=db,
     )
@@ -524,7 +524,7 @@ def follow_status(
 # =========================================================
 
 @router.get("/people")
-def get_people(
+async def get_people(
     request: Request,
     limit: int = Query(
         default=20,
@@ -543,7 +543,7 @@ def get_people(
     Current logged-in user is excluded.
     """
 
-    current_user = get_current_user_from_request(
+    current_user = await get_current_user_from_request(
         request=request,
         db=db,
     )

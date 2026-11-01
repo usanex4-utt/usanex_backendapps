@@ -47,7 +47,7 @@ router = APIRouter(
 # =========================================================
 
 @router.get("/people")
-def search_people(
+async def search_people(
     request: Request,
 
     q: str = Query(
@@ -87,7 +87,7 @@ def search_people(
     # CURRENT USER
     # =====================================================
 
-    current_user = get_current_user_from_request(
+    current_user = await get_current_user_from_request(
         request=request,
         db=db,
     )
