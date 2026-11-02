@@ -1,3 +1,4 @@
+import json
 from fastapi import (
     APIRouter,
     Depends,
@@ -196,4 +197,80 @@ async def get_moment_feed(
         raise HTTPException(
             status_code=500,
             detail="Unable to fetch Moments",
+        )
+
+@router.delete("/{moment_id}")
+async def delete_moment(
+    moment_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = await get_authenticated_user(request, db)
+
+    try:
+        result = db.execute(
+            text("""
+                UPDATE nex_moments
+                SET deleted_at = NOW()
+                WHERE id = :moment_id
+                  AND user_id = :user_id
+                  AND deleted_at IS NULL
+                RETURNING id, moderation_status, caption
+            """),
+            {
+                "moment_id": moment_id,
+                "user_id": user.user_id,
+            },
+        ).mappings().first()
+
+        if result is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=404,
+                detail="Moment not found or you cannot delete it",
+            )
+
+        db.execute(
+            text("""
+                INSERT INTO nex_moment_audit_logs
+                (moment_id, user_id, action, old_data, new_data, action_at)
+                VALUES (
+                    :moment_id,
+                    :user_id,
+                    'moment_deleted',
+                    CAST(:old_data AS jsonb),
+                    CAST(:new_data AS jsonb),
+                    NOW()
+                )
+            """),
+            {
+                "moment_id": moment_id,
+                "user_id": user.user_id,
+                "old_data": json.dumps({
+                    "deleted_at": None,
+                    "moderation_status": result["moderation_status"],
+                }),
+                "new_data": json.dumps({
+                    "deleted_at": "NOW",
+                    "action": "user_soft_delete",
+                }),
+            },
+        )
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Moment deleted successfully",
+            "moment_id": moment_id,
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Moment deletion failed",
         )
