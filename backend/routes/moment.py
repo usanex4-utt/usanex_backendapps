@@ -1,29 +1,32 @@
+import json
 import logging
-
-logger = logging.getLogger(__name__)
 import uuid
 from pathlib import Path
+from datetime import datetime, timezone
+from typing import Literal
 
-from fastapi import UploadFile, File, Form
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+from pydantic import BaseModel, Field
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
+from ..database.database import get_db
 from ..services.supabase_storage import (
     upload_moment_media,
     delete_moment_media,
 )
-import json
-from fastapi import (
-    APIRouter,
-    Depends,
-    HTTPException,
-    Request,
-)
-from sqlalchemy.orm import Session
-from sqlalchemy import text
-from datetime import datetime, timezone
-
-from ..database.database import get_db
 from .auth import get_current_user_from_request
 
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/moments",
@@ -59,9 +62,6 @@ async def moment_health(
         "user_id": user.user_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
-
-from pydantic import BaseModel, Field
-from typing import Literal
 
 
 class CreateMomentRequest(BaseModel):
@@ -133,10 +133,12 @@ async def create_moment(
 
     except Exception:
         db.rollback()
+        logger.exception("Moment creation failed")
         raise HTTPException(
             status_code=500,
             detail="Moment creation failed",
         )
+
 
 @router.get("/feed")
 async def get_moment_feed(
@@ -168,12 +170,11 @@ async def get_moment_feed(
                 FROM nex_moments
                 WHERE
                     expires_at > NOW()
-                    AND (archived_at IS NULL)
-                    AND (deleted_at IS NULL)
+                    AND archived_at IS NULL
+                    AND deleted_at IS NULL
                     AND moderation_status = 'active'
                     AND (
                         user_id = :viewer_id
-
                         OR (
                             moment_scope = 'normal'
                             AND can_view_normal_moment(
@@ -181,7 +182,6 @@ async def get_moment_feed(
                                 :viewer_id
                             )
                         )
-
                         OR (
                             moment_scope = 'couple'
                             AND can_view_couple_moment(
@@ -206,10 +206,12 @@ async def get_moment_feed(
         }
 
     except Exception:
+        logger.exception("Unable to fetch Moments")
         raise HTTPException(
             status_code=500,
             detail="Unable to fetch Moments",
         )
+
 
 @router.delete("/{moment_id}")
 async def delete_moment(
@@ -282,10 +284,12 @@ async def delete_moment(
 
     except Exception:
         db.rollback()
+        logger.exception("Moment deletion failed")
         raise HTTPException(
             status_code=500,
             detail="Moment deletion failed",
         )
+
 
 class UpdateMomentRequest(BaseModel):
     caption: str = Field(min_length=1, max_length=2000)
@@ -348,10 +352,13 @@ async def update_moment(
 
     except Exception:
         db.rollback()
+        logger.exception("Moment update failed")
         raise HTTPException(
             status_code=500,
             detail="Moment update failed",
         )
+
+
 ALLOWED_MEDIA_TYPES = {
     "image/jpeg": ("image", ".jpg"),
     "image/png": ("image", ".png"),
@@ -365,7 +372,7 @@ MAX_MEDIA_SIZE = 50 * 1024 * 1024
 
 
 def detect_media_type(data: bytes):
-    """Verify actual file signatures, not just the extension."""
+    """Check basic file signatures."""
 
     if data.startswith(b"\xff\xd8\xff"):
         return "image/jpeg"
@@ -403,162 +410,165 @@ async def upload_moment(
 ):
     user = await get_authenticated_user(request, db)
 
-    if len(caption) > 2000:
-        raise HTTPException(
-            status_code=400,
-            detail="Caption cannot exceed 2000 characters",
-        )
-
-    file_bytes = await file.read(MAX_MEDIA_SIZE + 1)
-
-    if not file_bytes:
-        raise HTTPException(
-            status_code=400,
-            detail="Empty file is not allowed",
-        )
-
-    if len(file_bytes) > MAX_MEDIA_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail="Maximum file size is 50 MB",
-        )
-
-if mime_type is None or mime_type not in ALLOWED_MEDIA_TYPES:
-raise HTTPException(
-    status_code=415,
-    detail="Unsupported or invalid media file",
-)
-
-if file.content_type and file.content_type != mime_type:
-    raise HTTPException(
-        status_code=415,
-        detail="File content type does not match actual file",
-    )
-    
-
-    media_type, extension = ALLOWED_MEDIA_TYPES[mime_type]
-
-    file_path = (
-        f"{user.user_id}/"
-        f"{uuid.uuid4().hex}{extension}"
-    )
-
-    storage_uploaded = False
-
     try:
-        upload_moment_media(
-            file_bytes=file_bytes,
-            file_path=file_path,
-            content_type=mime_type,
+        if len(caption) > 2000:
+            raise HTTPException(
+                status_code=400,
+                detail="Caption cannot exceed 2000 characters",
+            )
+
+        file_bytes = await file.read(MAX_MEDIA_SIZE + 1)
+
+        if not file_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="Empty file is not allowed",
+            )
+
+        if len(file_bytes) > MAX_MEDIA_SIZE:
+            raise HTTPException(
+                status_code=413,
+                detail="Maximum file size is 50 MB",
+            )
+
+        mime_type = detect_media_type(file_bytes)
+
+        if mime_type is None or mime_type not in ALLOWED_MEDIA_TYPES:
+            raise HTTPException(
+                status_code=415,
+                detail="Unsupported or invalid media file",
+            )
+
+        if file.content_type and file.content_type != mime_type:
+            raise HTTPException(
+                status_code=415,
+                detail="File content type does not match actual file",
+            )
+
+        media_type, extension = ALLOWED_MEDIA_TYPES[mime_type]
+
+        file_path = (
+            f"{user.user_id}/"
+            f"{uuid.uuid4().hex}{extension}"
         )
 
-        storage_uploaded = True
+        storage_uploaded = False
 
-        moment_result = db.execute(
-            text("""
-                INSERT INTO nex_moments
-                (
-                    user_id,
-                    moment_type,
-                    caption,
-                    media_url,
-                    audience,
-                    moment_scope,
-                    moderation_status,
-                    created_at,
-                    expires_at
-                )
-                VALUES (
-                    :user_id,
-                    :moment_type,
-                    :caption,
-                    :media_url,
-                    :audience,
-                    :moment_scope,
-                    'active',
-                    NOW(),
-                    NOW() + INTERVAL '24 hours'
-                )
-                RETURNING id
-            """),
-            {
-                "user_id": user.user_id,
-                "moment_type": media_type,
-                "caption": caption.strip(),
-                "media_url": file_path,
-                "audience": audience,
-                "moment_scope": moment_scope,
-            },
-        ).mappings().first()
+        try:
+            upload_moment_media(
+                file_bytes=file_bytes,
+                file_path=file_path,
+                content_type=mime_type,
+            )
 
-        if not moment_result:
-            raise RuntimeError("Moment database insert failed")
+            storage_uploaded = True
 
-        moment_id = moment_result["id"]
+            moment_result = db.execute(
+                text("""
+                    INSERT INTO nex_moments
+                    (
+                        user_id,
+                        moment_type,
+                        caption,
+                        media_url,
+                        audience,
+                        moment_scope,
+                        moderation_status,
+                        created_at,
+                        expires_at
+                    )
+                    VALUES (
+                        :user_id,
+                        :moment_type,
+                        :caption,
+                        :media_url,
+                        :audience,
+                        :moment_scope,
+                        'active',
+                        NOW(),
+                        NOW() + INTERVAL '24 hours'
+                    )
+                    RETURNING id
+                """),
+                {
+                    "user_id": user.user_id,
+                    "moment_type": media_type,
+                    "caption": caption.strip(),
+                    "media_url": file_path,
+                    "audience": audience,
+                    "moment_scope": moment_scope,
+                },
+            ).mappings().first()
 
-        db.execute(
-            text("""
-                INSERT INTO nex_moment_media
-                (
-                    moment_id,
-                    uploader_user_id,
-                    media_type,
-                    storage_path,
-                    original_file_name,
-                    mime_type,
-                    file_size_bytes
-                )
-                VALUES (
-                    :moment_id,
-                    :user_id,
-                    :media_type,
-                    :storage_path,
-                    :original_file_name,
-                    :mime_type,
-                    :file_size
-                )
-            """),
-            {
-                "moment_id": moment_id,
-                "user_id": user.user_id,
-                "media_type": media_type,
-                "storage_path": file_path,
-                "original_file_name": (
-                   Path((file.filename or "upload").replace("\\", "/")).name[:255]
-                 ),
-                "mime_type": mime_type,
-                "file_size": len(file_bytes),
-            },
-        )
+            if not moment_result:
+                raise RuntimeError("Moment database insert failed")
 
-        db.commit()
+            moment_id = moment_result["id"]
 
-        return {
-            "success": True,
-            "message": "Moment media uploaded successfully",
-            "moment": {
-                "id": moment_id,
-                "user_id": user.user_id,
-                "media_type": media_type,
-                "storage_path": file_path,
-                "mime_type": mime_type,
-                "file_size_bytes": len(file_bytes),
-            },
-        }
+            db.execute(
+                text("""
+                    INSERT INTO nex_moment_media
+                    (
+                        moment_id,
+                        uploader_user_id,
+                        media_type,
+                        storage_path,
+                        original_file_name,
+                        mime_type,
+                        file_size_bytes
+                    )
+                    VALUES (
+                        :moment_id,
+                        :user_id,
+                        :media_type,
+                        :storage_path,
+                        :original_file_name,
+                        :mime_type,
+                        :file_size
+                    )
+                """),
+                {
+                    "moment_id": moment_id,
+                    "user_id": user.user_id,
+                    "media_type": media_type,
+                    "storage_path": file_path,
+                    "original_file_name": Path(
+                        (file.filename or "upload").replace("\\", "/")
+                    ).name[:255],
+                    "mime_type": mime_type,
+                    "file_size": len(file_bytes),
+                },
+            )
 
-    except Exception:
-        db.rollback()
+            db.commit()
 
-        if storage_uploaded:
-            try:
-                delete_moment_media(file_path)
-            except Exception:
-                pass
+            return {
+                "success": True,
+                "message": "Moment media uploaded successfully",
+                "moment": {
+                    "id": moment_id,
+                    "user_id": user.user_id,
+                    "media_type": media_type,
+                    "storage_path": file_path,
+                    "mime_type": mime_type,
+                    "file_size_bytes": len(file_bytes),
+                },
+            }
 
-        raise HTTPException(
-            status_code=500,
-            detail="Moment media upload failed",
-        )
+        except Exception:
+            db.rollback()
+            logger.exception("Moment media upload failed")
+
+            if storage_uploaded:
+                try:
+                    delete_moment_media(file_path)
+                except Exception:
+                    logger.exception("Moment media storage cleanup failed")
+
+            raise HTTPException(
+                status_code=500,
+                detail="Moment media upload failed",
+            )
 
     finally:
         await file.close()
