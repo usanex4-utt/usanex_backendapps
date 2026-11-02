@@ -51,6 +51,7 @@ from .routes import (
     users,
     status,
     admin_moments,
+    moment,
 )
 
 
@@ -204,6 +205,7 @@ app.include_router(search.router)
 app.include_router(users.router)
 app.include_router(status.router)
 app.include_router(admin_moments.router)
+app.include_router(moment.router)
 
 
 # =========================================================
