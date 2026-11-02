@@ -42,7 +42,7 @@ class ConnectionManager:
     # Lifecycle
     # -------------------------------------------------
     async def connect(self, websocket: WebSocket, user_id: int):
-        await websocket.accept()
+        # 🚨 FIX: Removed await websocket.accept() because it is already accepted in the route!
 
         old_ws = self.active_connections.get(user_id)
         if old_ws is not None and old_ws is not websocket:
@@ -67,7 +67,6 @@ class ConnectionManager:
     # -------------------------------------------------
     async def touch(self, websocket: WebSocket) -> None:
         self._last_activity[websocket] = time.monotonic()
-        # Refresh Redis presence TTL for whoever owns this socket
         for uid, ws in self.active_connections.items():
             if ws is websocket:
                 try:
@@ -118,14 +117,6 @@ class ConnectionManager:
     # Generic delivery via Redis pub/sub (scope="couple")
     # -------------------------------------------------
     async def send_to_user(self, user_id: int, event: dict) -> bool:
-        """
-        Publish to Redis. Every worker (including this one) receives it via
-        _handle_redis_message and delivers locally if the user is connected.
-
-        Returns True if the user has an active socket on THIS worker.
-        Cross-worker 'delivered' is best-effort — the client will send
-        message_delivered once it actually arrives.
-        """
         local = user_id in self.active_connections
 
         try:
@@ -135,7 +126,6 @@ class ConnectionManager:
             )
         except Exception as e:
             logger.error("Couple Redis publish failed for user %s: %s", user_id, e)
-            # Best-effort local fallback
             ws = self.active_connections.get(user_id)
             if ws is not None:
                 try:
@@ -145,7 +135,6 @@ class ConnectionManager:
 
         return local
 
-    # Backwards-compat alias (couple_chat.py legacy)
     async def send_personal_message(self, user_id: int, message: dict):
         return await self.send_to_user(user_id, message)
 
