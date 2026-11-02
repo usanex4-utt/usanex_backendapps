@@ -47,3 +47,12 @@ def upload_moment_media(
     )
 
     return result
+
+def delete_moment_media(file_path: str):
+    """Delete uploaded media from private Supabase Storage."""
+
+    supabase = get_supabase_client()
+
+    return supabase.storage.from_("nex-moments").remove(
+        [file_path]
+    )
