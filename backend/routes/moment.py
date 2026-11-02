@@ -124,3 +124,76 @@ async def create_moment(
             status_code=500,
             detail="Moment creation failed",
         )
+
+@router.get("/feed")
+async def get_moment_feed(
+    request: Request,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    user = await get_authenticated_user(request, db)
+
+    if limit < 1 or limit > 100:
+        raise HTTPException(
+            status_code=400,
+            detail="Limit must be between 1 and 100",
+        )
+
+    try:
+        rows = db.execute(
+            text("""
+                SELECT
+                    id,
+                    user_id,
+                    moment_type,
+                    caption,
+                    media_url,
+                    audience,
+                    moment_scope,
+                    created_at,
+                    expires_at
+                FROM nex_moments
+                WHERE
+                    expires_at > NOW()
+                    AND (archived_at IS NULL)
+                    AND (deleted_at IS NULL)
+                    AND moderation_status = 'active'
+                    AND (
+                        user_id = :viewer_id
+
+                        OR (
+                            moment_scope = 'normal'
+                            AND can_view_normal_moment(
+                                id,
+                                :viewer_id
+                            )
+                        )
+
+                        OR (
+                            moment_scope = 'couple'
+                            AND can_view_couple_moment(
+                                id,
+                                :viewer_id
+                            )
+                        )
+                    )
+                ORDER BY created_at DESC
+                LIMIT :limit
+            """),
+            {
+                "viewer_id": user.user_id,
+                "limit": limit,
+            },
+        ).mappings().all()
+
+        return {
+            "success": True,
+            "count": len(rows),
+            "moments": [dict(row) for row in rows],
+        }
+
+    except Exception:
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to fetch Moments",
+        )
