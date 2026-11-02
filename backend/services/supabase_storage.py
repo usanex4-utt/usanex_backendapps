@@ -42,7 +42,7 @@ def upload_moment_media(
         file=file_bytes,
         file_options={
             "content-type": content_type,
-            "upsert": "false",
+            "upsert": False,
         },
     )
 
