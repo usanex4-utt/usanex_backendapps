@@ -50,6 +50,7 @@ from .routes import (
     search,
     users,
     status,
+    admin_moments,
 )
 
 
@@ -202,6 +203,7 @@ app.include_router(reels.router)
 app.include_router(search.router)
 app.include_router(users.router)
 app.include_router(status.router)
+app.include_router(admin_moments.router)
 
 
 # =========================================================
