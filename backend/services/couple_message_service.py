@@ -27,12 +27,10 @@ def get_or_create_couple_room(db: Session, user_one_id: int, user_two_id: int) -
         return room
     except SQLAlchemyError as e:
         db.rollback()
-        # If parallel request created it, fetch it
+        # Check if parallel request created it
         room = db.query(CoupleRoom).filter(CoupleRoom.user_one_id == a, CoupleRoom.user_two_id == b).first()
         if room is not None:
             return room
-            
-        # Trigger caught it
         raise Exception(f"Database Trigger Blocked Room Creation: {str(e)}")
 
 
@@ -51,15 +49,23 @@ async def create_couple_message(
     db.commit()
     db.refresh(msg)
 
-    await message_cache.push_message(msg)
-    await message_cache.incr_unread(receiver_id, room_id)
+    # 🚨 FIX: Agar Redis down hai toh message send hone se na ruke
+    try:
+        await message_cache.push_message(msg)
+        await message_cache.incr_unread(receiver_id, room_id)
+    except Exception as e:
+        print(f"⚠️ Redis Cache failed, but message saved to DB: {e}")
+        
     return msg
 
 
 async def get_couple_messages(db: Session, room_id: int, limit: int = 50) -> list[Union[CoupleMessage, dict]]:
-    cached = await message_cache.get_recent(room_id)
-    if cached is not None:
-        return list(reversed(cached[:limit]))
+    try:
+        cached = await message_cache.get_recent(room_id)
+        if cached is not None:
+            return list(reversed(cached[:limit]))
+    except Exception:
+        pass
 
     rows = (
         db.query(CoupleMessage)
@@ -69,8 +75,11 @@ async def get_couple_messages(db: Session, room_id: int, limit: int = 50) -> lis
     )
     rows_chrono = list(reversed(rows))
 
-    for m in rows_chrono:
-        await message_cache.push_message(m)
+    try:
+        for m in rows_chrono:
+            await message_cache.push_message(m)
+    except Exception:
+        pass
 
     return rows_chrono
 

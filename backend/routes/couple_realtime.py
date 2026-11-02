@@ -172,7 +172,7 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
     current_user = partner = room = heartbeat_task = None
     connected = False
 
-    # 🚨 ACCEPT WEBSOCKET FIRST (Isse 500 error nahi aayega, proper error message milega)
+    # 🚨 ACCEPT WEBSOCKET FIRST
     await websocket.accept()
 
     try:
@@ -212,7 +212,7 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
             await websocket.close(code=1008)
             return
 
-        # ROOM CREATION (Database error aayega toh frontend ko bhej dega)
+        # ROOM CREATION
         try:
             room = get_or_create_couple_room(db=db, user_one_id=current_user.id, user_two_id=partner.id)
         except Exception as e:
@@ -285,6 +285,13 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
                     )
                 except Exception as e:
                     if idem_key: await idempotency.release(idem_key)
+                    logger.error(f"Failed to create message: {e}")
+                    # 🚨 FIX: Error bhejien taaki pending clock ruke
+                    await websocket.send_json({
+                        "type": "error", 
+                        "message": "Message could not be saved. Try again.",
+                        "client_message_id": client_id
+                    })
                     continue
 
                 payload = {
