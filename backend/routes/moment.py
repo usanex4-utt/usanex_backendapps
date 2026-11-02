@@ -1,3 +1,6 @@
+import logging
+
+logger = logging.getLogger(__name__)
 import uuid
 from pathlib import Path
 
@@ -523,8 +526,8 @@ if file.content_type and file.content_type != mime_type:
                 "media_type": media_type,
                 "storage_path": file_path,
                 "original_file_name": (
-                    Path(file.filename or "upload").name[:255]
-                ),
+                   Path((file.filename or "upload").replace("\\", "/")).name[:255]
+                 ),
                 "mime_type": mime_type,
                 "file_size": len(file_bytes),
             },
