@@ -63,11 +63,20 @@ async def moment_health(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-
 class CreateMomentRequest(BaseModel):
     caption: str = Field(min_length=1, max_length=2000)
-    audience: Literal["connections", "only_me"] = "connections"
+
+    audience: Literal[
+        "connections",
+        "following",
+        "followers",
+        "selected_people",
+        "only_me",
+    ] = "connections"
+
     moment_scope: Literal["normal", "couple"] = "normal"
+
+    selected_user_ids: list[str] = Field(default_factory=list)
 
 
 @router.post("/create")
@@ -293,8 +302,18 @@ async def delete_moment(
 
 class UpdateMomentRequest(BaseModel):
     caption: str = Field(min_length=1, max_length=2000)
-    audience: Literal["connections", "only_me"]
+
+    audience: Literal[
+        "connections",
+        "following",
+        "followers",
+        "selected_people",
+        "only_me",
+    ]
+
     moment_scope: Literal["normal", "couple"]
+
+    selected_user_ids: list[str] = Field(default_factory=list)
 
 
 @router.put("/{moment_id}")
