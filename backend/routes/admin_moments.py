@@ -1,4 +1,6 @@
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -30,7 +32,10 @@ def require_admin(user=Depends(get_current_user_from_request)):
 
 @router.get("/moderation-list")
 def moderation_list(
-    status: str = Query(default="all", pattern="^(all|hidden|removed)$"),
+    status: str = Query(
+        default="all",
+        pattern="^(all|hidden|removed)$",
+    ),
     limit: int = Query(default=50, ge=1, le=100),
     admin=Depends(require_admin),
     db: Session = Depends(get_db),
@@ -45,7 +50,8 @@ def moderation_list(
     query = text(f"""
         SELECT id, user_id, caption, moment_type, audience,
                moderation_status, admin_moderation_reason,
-               admin_hidden_at, admin_hidden_by, created_at, expires_at
+               admin_hidden_at, admin_hidden_by,
+               created_at, expires_at
         FROM nex_moments
         WHERE {" AND ".join(conditions)}
         ORDER BY admin_hidden_at DESC NULLS LAST, created_at DESC
@@ -53,6 +59,7 @@ def moderation_list(
     """)
 
     rows = db.execute(query, params).mappings().all()
+
     return {"items": [dict(row) for row in rows]}
 
 
@@ -64,7 +71,10 @@ def moderate_moment(
     db: Session,
 ):
     if action not in ("hidden", "removed"):
-        raise HTTPException(status_code=400, detail="Invalid moderation action")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid moderation action",
+        )
 
     try:
         row = db.execute(
@@ -78,15 +88,24 @@ def moderate_moment(
         ).mappings().first()
 
         if row is None:
-            raise HTTPException(status_code=404, detail="Moment not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Moment not found",
+            )
 
         old_status = row["moderation_status"]
 
         if old_status == "removed":
-            raise HTTPException(status_code=409, detail="Moment already removed")
+            raise HTTPException(
+                status_code=409,
+                detail="Moment already removed",
+            )
 
         if action == "hidden" and old_status == "hidden":
-            raise HTTPException(status_code=409, detail="Moment already hidden")
+            raise HTTPException(
+                status_code=409,
+                detail="Moment already hidden",
+            )
 
         db.execute(
             text("""
@@ -108,21 +127,32 @@ def moderate_moment(
         db.execute(
             text("""
                 INSERT INTO nex_moment_audit_logs
-                (moment_id, admin_user_id, action, old_status, new_status, reason, created_at)
-                VALUES
-                (:moment_id, :admin_id, :action, :old_status, :new_status, :reason, NOW())
+                (moment_id, user_id, action, old_data, new_data, action_at)
+                VALUES (
+                    :moment_id,
+                    :admin_id,
+                    :action,
+                    CAST(:old_data AS jsonb),
+                    CAST(:new_data AS jsonb),
+                    NOW()
+                )
             """),
             {
                 "moment_id": moment_id,
                 "admin_id": admin_user_id,
                 "action": "moment_" + action,
-                "old_status": old_status,
-                "new_status": action,
-                "reason": reason,
+                "old_data": json.dumps({
+                    "moderation_status": old_status,
+                }),
+                "new_data": json.dumps({
+                    "moderation_status": action,
+                    "reason": reason,
+                }),
             },
         )
 
         db.commit()
+
         return {
             "success": True,
             "moment_id": moment_id,
@@ -132,9 +162,13 @@ def moderate_moment(
     except HTTPException:
         db.rollback()
         raise
+
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Moderation operation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Moderation operation failed",
+        )
 
 
 @router.post("/{moment_id}/hide")
@@ -145,7 +179,11 @@ def hide_moment(
     db: Session = Depends(get_db),
 ):
     return moderate_moment(
-        moment_id, "hidden", payload.reason, admin.user_id, db
+        moment_id,
+        "hidden",
+        payload.reason,
+        admin.user_id,
+        db,
     )
 
 
@@ -157,7 +195,11 @@ def remove_moment(
     db: Session = Depends(get_db),
 ):
     return moderate_moment(
-        moment_id, "removed", payload.reason, admin.user_id, db
+        moment_id,
+        "removed",
+        payload.reason,
+        admin.user_id,
+        db,
     )
 
 
@@ -192,22 +234,46 @@ def unhide_moment(
         db.execute(
             text("""
                 INSERT INTO nex_moment_audit_logs
-                (moment_id, admin_user_id, action, old_status, new_status, reason, created_at)
-                VALUES
-                (:moment_id, :admin_id, 'moment_unhidden', 'hidden', 'active',
-                 'Admin unhidden Moment', NOW())
+                (moment_id, user_id, action, old_data, new_data, action_at)
+                VALUES (
+                    :moment_id,
+                    :admin_id,
+                    'moment_unhidden',
+                    CAST(:old_data AS jsonb),
+                    CAST(:new_data AS jsonb),
+                    NOW()
+                )
             """),
-            {"moment_id": moment_id, "admin_id": admin.user_id},
+            {
+                "moment_id": moment_id,
+                "admin_id": admin.user_id,
+                "old_data": json.dumps({
+                    "moderation_status": "hidden",
+                }),
+                "new_data": json.dumps({
+                    "moderation_status": "active",
+                    "reason": "Admin unhidden Moment",
+                }),
+            },
         )
 
         db.commit()
-        return {"success": True, "moment_id": moment_id, "moderation_status": "active"}
+
+        return {
+            "success": True,
+            "moment_id": moment_id,
+            "moderation_status": "active",
+        }
 
     except HTTPException:
         raise
+
     except Exception:
         db.rollback()
-        raise HTTPException(status_code=500, detail="Unhide operation failed")
+        raise HTTPException(
+            status_code=500,
+            detail="Unhide operation failed",
+        )
 
 
 @router.get("/audit-logs")
@@ -226,15 +292,14 @@ def audit_logs(
 
     rows = db.execute(
         text(f"""
-            SELECT id, moment_id, admin_user_id, action,
-                   old_status, new_status, reason, created_at
+            SELECT id, moment_id, user_id, action,
+                   old_data, new_data, action_at
             FROM nex_moment_audit_logs
             {condition}
-            ORDER BY created_at DESC
+            ORDER BY action_at DESC
             LIMIT :limit
         """),
         params,
     ).mappings().all()
 
     return {"items": [dict(row) for row in rows]}
-            
