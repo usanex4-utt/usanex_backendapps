@@ -395,7 +395,7 @@ async def upload_moment(
     file: UploadFile = File(...),
     caption: str = Form(""),
     audience: Literal["connections", "only_me"] = Form("connections"),
-    moment_scope: Literal["normal", "couple"] = Form("normal"),
+    moment_scope: Literal["normal"] = Form("normal"),
     db: Session = Depends(get_db),
 ):
     user = await get_authenticated_user(request, db)
@@ -422,11 +422,18 @@ async def upload_moment(
 
     mime_type = detect_media_type(file_bytes)
 
-    if mime_type not in ALLOWED_MEDIA_TYPES:
-        raise HTTPException(
-            status_code=415,
-            detail="Unsupported or invalid media file",
-        )
+    if mime_type is None or mime_type not in ALLOWED_MEDIA_TYPES:
+    raise HTTPException(
+        status_code=415,
+        detail="Unsupported or invalid media file",
+    )
+
+if file.content_type and file.content_type != mime_type:
+    raise HTTPException(
+        status_code=415,
+        detail="File content type does not match actual file",
+    )
+    
 
     media_type, extension = ALLOWED_MEDIA_TYPES[mime_type]
 
