@@ -34,6 +34,10 @@ router = APIRouter(
 )
 
 
+# --------------------------------------------------
+# AUTHENTICATION
+# --------------------------------------------------
+
 async def get_authenticated_user(
     request: Request,
     db: Session,
@@ -49,6 +53,128 @@ async def get_authenticated_user(
     return user
 
 
+# --------------------------------------------------
+# AUDIENCE VALIDATION AND SELECTED USERS
+# --------------------------------------------------
+
+NORMAL_AUDIENCES = {
+    "connections",
+    "following",
+    "followers",
+    "selected_people",
+    "only_me",
+}
+
+
+def validate_moment_audience(
+    audience: str,
+    moment_scope: str,
+    selected_user_ids: list[str],
+):
+    if moment_scope == "couple":
+        if audience != "only_me" or selected_user_ids:
+            raise HTTPException(
+                status_code=400,
+                detail="Couple Moment must use only_me audience",
+            )
+        return
+
+    if moment_scope != "normal":
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Moment scope",
+        )
+
+    if audience not in NORMAL_AUDIENCES:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Moment audience",
+        )
+
+    if audience == "selected_people" and not selected_user_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Select at least one person",
+        )
+
+    if audience != "selected_people" and selected_user_ids:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected users are only allowed for selected_people audience",
+        )
+
+
+def save_moment_audience(
+    db: Session,
+    moment_id: int,
+    selected_user_ids: list[str],
+):
+    # Remove whitespace and duplicate IDs
+    selected_user_ids = list(
+        dict.fromkeys(
+            user_id.strip()
+            for user_id in selected_user_ids
+            if user_id and user_id.strip()
+        )
+    )
+
+    if len(selected_user_ids) > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Maximum 500 selected users allowed",
+        )
+
+    if selected_user_ids:
+        valid_users = db.execute(
+            text("""
+                SELECT user_id
+                FROM public.users
+                WHERE user_id = ANY(:user_ids)
+            """),
+            {
+                "user_ids": selected_user_ids,
+            },
+        ).scalars().all()
+
+        if set(valid_users) != set(selected_user_ids):
+            raise HTTPException(
+                status_code=400,
+                detail="One or more selected users do not exist",
+            )
+
+    # Replace the existing selected audience list
+    db.execute(
+        text("""
+            DELETE FROM public.nex_moment_audience
+            WHERE moment_id = :moment_id
+        """),
+        {
+            "moment_id": moment_id,
+        },
+    )
+
+    if selected_user_ids:
+        db.execute(
+            text("""
+                INSERT INTO public.nex_moment_audience
+                    (moment_id, allowed_user_id)
+                VALUES
+                    (:moment_id, :user_id)
+            """),
+            [
+                {
+                    "moment_id": moment_id,
+                    "user_id": user_id,
+                }
+                for user_id in selected_user_ids
+            ],
+        )
+
+
+# --------------------------------------------------
+# HEALTH
+# --------------------------------------------------
+
 @router.get("/health")
 async def moment_health(
     request: Request,
@@ -62,6 +188,11 @@ async def moment_health(
         "user_id": user.user_id,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# --------------------------------------------------
+# REQUEST MODELS
+# --------------------------------------------------
 
 class CreateMomentRequest(BaseModel):
     caption: str = Field(min_length=1, max_length=2000)
@@ -79,6 +210,26 @@ class CreateMomentRequest(BaseModel):
     selected_user_ids: list[str] = Field(default_factory=list)
 
 
+class UpdateMomentRequest(BaseModel):
+    caption: str = Field(min_length=1, max_length=2000)
+
+    audience: Literal[
+        "connections",
+        "following",
+        "followers",
+        "selected_people",
+        "only_me",
+    ]
+
+    moment_scope: Literal["normal", "couple"]
+
+    selected_user_ids: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------
+# CREATE TEXT MOMENT
+# --------------------------------------------------
+
 @router.post("/create")
 async def create_moment(
     payload: CreateMomentRequest,
@@ -86,6 +237,14 @@ async def create_moment(
     db: Session = Depends(get_db),
 ):
     user = await get_authenticated_user(request, db)
+
+    selected_user_ids = payload.selected_user_ids
+
+    validate_moment_audience(
+        payload.audience,
+        payload.moment_scope,
+        selected_user_ids,
+    )
 
     try:
         result = db.execute(
@@ -111,8 +270,14 @@ async def create_moment(
                     NOW(),
                     NOW() + INTERVAL '24 hours'
                 )
-                RETURNING id, user_id, caption, audience,
-                          moment_scope, created_at, expires_at
+                RETURNING
+                    id,
+                    user_id,
+                    caption,
+                    audience,
+                    moment_scope,
+                    created_at,
+                    expires_at
             """),
             {
                 "user_id": user.user_id,
@@ -127,6 +292,12 @@ async def create_moment(
                 status_code=500,
                 detail="Moment could not be created",
             )
+
+        save_moment_audience(
+            db,
+            result["id"],
+            selected_user_ids,
+        )
 
         db.commit()
 
@@ -143,11 +314,16 @@ async def create_moment(
     except Exception:
         db.rollback()
         logger.exception("Moment creation failed")
+
         raise HTTPException(
             status_code=500,
             detail="Moment creation failed",
         )
 
+
+# --------------------------------------------------
+# MOMENT FEED
+# --------------------------------------------------
 
 @router.get("/feed")
 async def get_moment_feed(
@@ -216,11 +392,16 @@ async def get_moment_feed(
 
     except Exception:
         logger.exception("Unable to fetch Moments")
+
         raise HTTPException(
             status_code=500,
             detail="Unable to fetch Moments",
         )
 
+
+# --------------------------------------------------
+# DELETE MOMENT
+# --------------------------------------------------
 
 @router.delete("/{moment_id}")
 async def delete_moment(
@@ -248,6 +429,7 @@ async def delete_moment(
 
         if result is None:
             db.rollback()
+
             raise HTTPException(
                 status_code=404,
                 detail="Moment not found or you cannot delete it",
@@ -256,7 +438,14 @@ async def delete_moment(
         db.execute(
             text("""
                 INSERT INTO nex_moment_audit_logs
-                (moment_id, user_id, action, old_data, new_data, action_at)
+                (
+                    moment_id,
+                    user_id,
+                    action,
+                    old_data,
+                    new_data,
+                    action_at
+                )
                 VALUES (
                     :moment_id,
                     :user_id,
@@ -294,27 +483,16 @@ async def delete_moment(
     except Exception:
         db.rollback()
         logger.exception("Moment deletion failed")
+
         raise HTTPException(
             status_code=500,
             detail="Moment deletion failed",
         )
 
 
-class UpdateMomentRequest(BaseModel):
-    caption: str = Field(min_length=1, max_length=2000)
-
-    audience: Literal[
-        "connections",
-        "following",
-        "followers",
-        "selected_people",
-        "only_me",
-    ]
-
-    moment_scope: Literal["normal", "couple"]
-
-    selected_user_ids: list[str] = Field(default_factory=list)
-
+# --------------------------------------------------
+# UPDATE MOMENT
+# --------------------------------------------------
 
 @router.put("/{moment_id}")
 async def update_moment(
@@ -324,6 +502,12 @@ async def update_moment(
     db: Session = Depends(get_db),
 ):
     user = await get_authenticated_user(request, db)
+
+    validate_moment_audience(
+        payload.audience,
+        payload.moment_scope,
+        payload.selected_user_ids,
+    )
 
     try:
         result = db.execute(
@@ -339,8 +523,14 @@ async def update_moment(
                   AND archived_at IS NULL
                   AND expires_at > NOW()
                   AND moderation_status = 'active'
-                RETURNING id, user_id, caption, audience,
-                          moment_scope, created_at, expires_at
+                RETURNING
+                    id,
+                    user_id,
+                    caption,
+                    audience,
+                    moment_scope,
+                    created_at,
+                    expires_at
             """),
             {
                 "moment_id": moment_id,
@@ -353,10 +543,17 @@ async def update_moment(
 
         if result is None:
             db.rollback()
+
             raise HTTPException(
                 status_code=404,
                 detail="Moment not found or cannot be edited",
             )
+
+        save_moment_audience(
+            db,
+            moment_id,
+            payload.selected_user_ids,
+        )
 
         db.commit()
 
@@ -367,16 +564,22 @@ async def update_moment(
         }
 
     except HTTPException:
+        db.rollback()
         raise
 
     except Exception:
         db.rollback()
         logger.exception("Moment update failed")
+
         raise HTTPException(
             status_code=500,
             detail="Moment update failed",
         )
 
+
+# --------------------------------------------------
+# MEDIA VALIDATION
+# --------------------------------------------------
 
 ALLOWED_MEDIA_TYPES = {
     "image/jpeg": ("image", ".jpg"),
@@ -418,16 +621,36 @@ def detect_media_type(data: bytes):
     return None
 
 
+# --------------------------------------------------
+# UPLOAD MEDIA MOMENT
+# --------------------------------------------------
+
 @router.post("/upload")
 async def upload_moment(
     request: Request,
     file: UploadFile = File(...),
     caption: str = Form(""),
-    audience: Literal["connections", "only_me"] = Form("connections"),
+    audience: Literal[
+        "connections",
+        "following",
+        "followers",
+        "selected_people",
+        "only_me",
+    ] = Form("connections"),
     moment_scope: Literal["normal"] = Form("normal"),
+    selected_user_ids: list[str] = Form([]),
     db: Session = Depends(get_db),
 ):
     user = await get_authenticated_user(request, db)
+
+    validate_moment_audience(
+        audience,
+        moment_scope,
+        selected_user_ids,
+    )
+
+    storage_uploaded = False
+    file_path = None
 
     try:
         if len(caption) > 2000:
@@ -471,123 +694,137 @@ async def upload_moment(
             f"{uuid.uuid4().hex}{extension}"
         )
 
-        storage_uploaded = False
+        upload_moment_media(
+            file_bytes=file_bytes,
+            file_path=file_path,
+            content_type=mime_type,
+        )
 
-        try:
-            upload_moment_media(
-                file_bytes=file_bytes,
-                file_path=file_path,
-                content_type=mime_type,
-            )
+        storage_uploaded = True
 
-            storage_uploaded = True
+        moment_result = db.execute(
+            text("""
+                INSERT INTO nex_moments
+                (
+                    user_id,
+                    moment_type,
+                    caption,
+                    media_url,
+                    audience,
+                    moment_scope,
+                    moderation_status,
+                    created_at,
+                    expires_at
+                )
+                VALUES (
+                    :user_id,
+                    :moment_type,
+                    :caption,
+                    :media_url,
+                    :audience,
+                    :moment_scope,
+                    'active',
+                    NOW(),
+                    NOW() + INTERVAL '24 hours'
+                )
+                RETURNING id
+            """),
+            {
+                "user_id": user.user_id,
+                "moment_type": media_type,
+                "caption": caption.strip(),
+                "media_url": file_path,
+                "audience": audience,
+                "moment_scope": moment_scope,
+            },
+        ).mappings().first()
 
-            moment_result = db.execute(
-                text("""
-                    INSERT INTO nex_moments
-                    (
-                        user_id,
-                        moment_type,
-                        caption,
-                        media_url,
-                        audience,
-                        moment_scope,
-                        moderation_status,
-                        created_at,
-                        expires_at
-                    )
-                    VALUES (
-                        :user_id,
-                        :moment_type,
-                        :caption,
-                        :media_url,
-                        :audience,
-                        :moment_scope,
-                        'active',
-                        NOW(),
-                        NOW() + INTERVAL '24 hours'
-                    )
-                    RETURNING id
-                """),
-                {
-                    "user_id": user.user_id,
-                    "moment_type": media_type,
-                    "caption": caption.strip(),
-                    "media_url": file_path,
-                    "audience": audience,
-                    "moment_scope": moment_scope,
-                },
-            ).mappings().first()
+        if not moment_result:
+            raise RuntimeError("Moment database insert failed")
 
-            if not moment_result:
-                raise RuntimeError("Moment database insert failed")
+        moment_id = moment_result["id"]
 
-            moment_id = moment_result["id"]
+        db.execute(
+            text("""
+                INSERT INTO nex_moment_media
+                (
+                    moment_id,
+                    uploader_user_id,
+                    media_type,
+                    storage_path,
+                    original_file_name,
+                    mime_type,
+                    file_size_bytes
+                )
+                VALUES (
+                    :moment_id,
+                    :user_id,
+                    :media_type,
+                    :storage_path,
+                    :original_file_name,
+                    :mime_type,
+                    :file_size
+                )
+            """),
+            {
+                "moment_id": moment_id,
+                "user_id": user.user_id,
+                "media_type": media_type,
+                "storage_path": file_path,
+                "original_file_name": Path(
+                    (file.filename or "upload").replace("\\", "/")
+                ).name[:255],
+                "mime_type": mime_type,
+                "file_size": len(file_bytes),
+            },
+        )
 
-            db.execute(
-                text("""
-                    INSERT INTO nex_moment_media
-                    (
-                        moment_id,
-                        uploader_user_id,
-                        media_type,
-                        storage_path,
-                        original_file_name,
-                        mime_type,
-                        file_size_bytes
-                    )
-                    VALUES (
-                        :moment_id,
-                        :user_id,
-                        :media_type,
-                        :storage_path,
-                        :original_file_name,
-                        :mime_type,
-                        :file_size
-                    )
-                """),
-                {
-                    "moment_id": moment_id,
-                    "user_id": user.user_id,
-                    "media_type": media_type,
-                    "storage_path": file_path,
-                    "original_file_name": Path(
-                        (file.filename or "upload").replace("\\", "/")
-                    ).name[:255],
-                    "mime_type": mime_type,
-                    "file_size": len(file_bytes),
-                },
-            )
+        save_moment_audience(
+            db,
+            moment_id,
+            selected_user_ids,
+        )
 
-            db.commit()
+        db.commit()
 
-            return {
-                "success": True,
-                "message": "Moment media uploaded successfully",
-                "moment": {
-                    "id": moment_id,
-                    "user_id": user.user_id,
-                    "media_type": media_type,
-                    "storage_path": file_path,
-                    "mime_type": mime_type,
-                    "file_size_bytes": len(file_bytes),
-                },
-            }
+        return {
+            "success": True,
+            "message": "Moment media uploaded successfully",
+            "moment": {
+                "id": moment_id,
+                "user_id": user.user_id,
+                "media_type": media_type,
+                "storage_path": file_path,
+                "mime_type": mime_type,
+                "file_size_bytes": len(file_bytes),
+            },
+        }
 
-        except Exception:
-            db.rollback()
-            logger.exception("Moment media upload failed")
+    except HTTPException:
+        db.rollback()
 
-            if storage_uploaded:
-                try:
-                    delete_moment_media(file_path)
-                except Exception:
-                    logger.exception("Moment media storage cleanup failed")
+        if storage_uploaded and file_path:
+            try:
+                delete_moment_media(file_path)
+            except Exception:
+                logger.exception("Moment media storage cleanup failed")
 
-            raise HTTPException(
-                status_code=500,
-                detail="Moment media upload failed",
-            )
+        raise
+
+    except Exception:
+        db.rollback()
+        logger.exception("Moment media upload failed")
+
+        if storage_uploaded and file_path:
+            try:
+                delete_moment_media(file_path)
+            except Exception:
+                logger.exception("Moment media storage cleanup failed")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Moment media upload failed",
+        )
 
     finally:
         await file.close()
