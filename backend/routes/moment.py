@@ -423,13 +423,11 @@ async def upload_moment(
             detail="Maximum file size is 50 MB",
         )
 
-    mime_type = detect_media_type(file_bytes)
-
-    if mime_type is None or mime_type not in ALLOWED_MEDIA_TYPES:
-    raise HTTPException(
-        status_code=415,
-        detail="Unsupported or invalid media file",
-    )
+if mime_type is None or mime_type not in ALLOWED_MEDIA_TYPES:
+raise HTTPException(
+    status_code=415,
+    detail="Unsupported or invalid media file",
+)
 
 if file.content_type and file.content_type != mime_type:
     raise HTTPException(
