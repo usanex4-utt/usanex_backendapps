@@ -2,6 +2,7 @@
 from typing import Optional, Union
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError  # <-- NEW: To handle duplicate room creation
 
 from ..database.couple_models import (
     CoupleRoom,
@@ -13,18 +14,38 @@ from .redis import message_cache
 
 
 def get_or_create_couple_room(db: Session, user_one_id: int, user_two_id: int) -> CoupleRoom:
+    """
+    Fetches the room, or creates it if it doesn't exist. 
+    Handles race conditions safely (if both users connect at the exact same time).
+    """
     a, b = sorted([user_one_id, user_two_id])
+    
+    # 1. Check if room already exists
     room = (
         db.query(CoupleRoom)
         .filter(CoupleRoom.user_one_id == a, CoupleRoom.user_two_id == b)
         .first()
     )
-    if room is None:
-        room = CoupleRoom(user_one_id=a, user_two_id=b, is_active=True)
-        db.add(room)
+    if room is not None:
+        return room
+
+    # 2. Try to create a new room
+    room = CoupleRoom(user_one_id=a, user_two_id=b, is_active=True)
+    db.add(room)
+    try:
         db.commit()
         db.refresh(room)
-    return room
+        return room
+    except IntegrityError:
+        # 3. If BOTH users clicked at the exact same millisecond, 
+        # the other request already created it. We rollback and fetch it.
+        db.rollback()
+        room = (
+            db.query(CoupleRoom)
+            .filter(CoupleRoom.user_one_id == a, CoupleRoom.user_two_id == b)
+            .first()
+        )
+        return room
 
 
 async def create_couple_message(
@@ -95,6 +116,10 @@ async def get_couple_messages(
 
 
 def _get_or_create_receipt(db: Session, message_id: int, receiver_id: int) -> CoupleMessageReceipt:
+    """
+    Handles message read/delivered receipts. Also handles race conditions 
+    (if both users send a read receipt at the same time).
+    """
     row = (
         db.query(CoupleMessageReceipt)
         .filter(
@@ -103,19 +128,33 @@ def _get_or_create_receipt(db: Session, message_id: int, receiver_id: int) -> Co
         )
         .first()
     )
-    if row is None:
-        row = CoupleMessageReceipt(
-            message_id=message_id,
-            receiver_id=receiver_id,
-            delivered=False,
-            seen=False,
-            created_at=utcnow(),
-            updated_at=utcnow(),
-        )
-        db.add(row)
+    if row is not None:
+        return row
+
+    row = CoupleMessageReceipt(
+        message_id=message_id,
+        receiver_id=receiver_id,
+        delivered=False,
+        seen=False,
+        created_at=utcnow(),
+        updated_at=utcnow(),
+    )
+    db.add(row)
+    try:
         db.commit()
         db.refresh(row)
-    return row
+        return row
+    except IntegrityError:
+        db.rollback()
+        row = (
+            db.query(CoupleMessageReceipt)
+            .filter(
+                CoupleMessageReceipt.message_id == message_id,
+                CoupleMessageReceipt.receiver_id == receiver_id,
+            )
+            .first()
+        )
+        return row
 
 
 def mark_message_delivered(db: Session, message_id: int, receiver_id: int) -> CoupleMessageReceipt:
