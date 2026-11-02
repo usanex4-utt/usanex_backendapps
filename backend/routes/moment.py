@@ -1,3 +1,12 @@
+import uuid
+from pathlib import Path
+
+from fastapi import UploadFile, File, Form
+
+from ..services.supabase_storage import (
+    upload_moment_media,
+    delete_moment_media,
+)
 import json
 from fastapi import (
     APIRouter,
@@ -340,3 +349,208 @@ async def update_moment(
             status_code=500,
             detail="Moment update failed",
         )
+ALLOWED_MEDIA_TYPES = {
+    "image/jpeg": ("image", ".jpg"),
+    "image/png": ("image", ".png"),
+    "image/webp": ("image", ".webp"),
+    "image/gif": ("image", ".gif"),
+    "video/mp4": ("video", ".mp4"),
+    "video/webm": ("video", ".webm"),
+}
+
+MAX_MEDIA_SIZE = 50 * 1024 * 1024
+
+
+def detect_media_type(data: bytes):
+    """Verify actual file signatures, not just the extension."""
+
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+
+    if data.startswith((b"GIF87a", b"GIF89a")):
+        return "image/gif"
+
+    if (
+        len(data) >= 12
+        and data[0:4] == b"RIFF"
+        and data[8:12] == b"WEBP"
+    ):
+        return "image/webp"
+
+    if len(data) >= 12 and data[4:8] == b"ftyp":
+        return "video/mp4"
+
+    if data.startswith(b"\x1a\x45\xdf\xa3"):
+        return "video/webm"
+
+    return None
+
+
+@router.post("/upload")
+async def upload_moment(
+    request: Request,
+    file: UploadFile = File(...),
+    caption: str = Form(""),
+    audience: Literal["connections", "only_me"] = Form("connections"),
+    moment_scope: Literal["normal", "couple"] = Form("normal"),
+    db: Session = Depends(get_db),
+):
+    user = await get_authenticated_user(request, db)
+
+    if len(caption) > 2000:
+        raise HTTPException(
+            status_code=400,
+            detail="Caption cannot exceed 2000 characters",
+        )
+
+    file_bytes = await file.read(MAX_MEDIA_SIZE + 1)
+
+    if not file_bytes:
+        raise HTTPException(
+            status_code=400,
+            detail="Empty file is not allowed",
+        )
+
+    if len(file_bytes) > MAX_MEDIA_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="Maximum file size is 50 MB",
+        )
+
+    mime_type = detect_media_type(file_bytes)
+
+    if mime_type not in ALLOWED_MEDIA_TYPES:
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported or invalid media file",
+        )
+
+    media_type, extension = ALLOWED_MEDIA_TYPES[mime_type]
+
+    file_path = (
+        f"{user.user_id}/"
+        f"{uuid.uuid4().hex}{extension}"
+    )
+
+    storage_uploaded = False
+
+    try:
+        upload_moment_media(
+            file_bytes=file_bytes,
+            file_path=file_path,
+            content_type=mime_type,
+        )
+
+        storage_uploaded = True
+
+        moment_result = db.execute(
+            text("""
+                INSERT INTO nex_moments
+                (
+                    user_id,
+                    moment_type,
+                    caption,
+                    media_url,
+                    audience,
+                    moment_scope,
+                    moderation_status,
+                    created_at,
+                    expires_at
+                )
+                VALUES (
+                    :user_id,
+                    :moment_type,
+                    :caption,
+                    :media_url,
+                    :audience,
+                    :moment_scope,
+                    'active',
+                    NOW(),
+                    NOW() + INTERVAL '24 hours'
+                )
+                RETURNING id
+            """),
+            {
+                "user_id": user.user_id,
+                "moment_type": media_type,
+                "caption": caption.strip(),
+                "media_url": file_path,
+                "audience": audience,
+                "moment_scope": moment_scope,
+            },
+        ).mappings().first()
+
+        if not moment_result:
+            raise RuntimeError("Moment database insert failed")
+
+        moment_id = moment_result["id"]
+
+        db.execute(
+            text("""
+                INSERT INTO nex_moment_media
+                (
+                    moment_id,
+                    uploader_user_id,
+                    media_type,
+                    storage_path,
+                    original_file_name,
+                    mime_type,
+                    file_size_bytes
+                )
+                VALUES (
+                    :moment_id,
+                    :user_id,
+                    :media_type,
+                    :storage_path,
+                    :original_file_name,
+                    :mime_type,
+                    :file_size
+                )
+            """),
+            {
+                "moment_id": moment_id,
+                "user_id": user.user_id,
+                "media_type": media_type,
+                "storage_path": file_path,
+                "original_file_name": (
+                    Path(file.filename or "upload").name[:255]
+                ),
+                "mime_type": mime_type,
+                "file_size": len(file_bytes),
+            },
+        )
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Moment media uploaded successfully",
+            "moment": {
+                "id": moment_id,
+                "user_id": user.user_id,
+                "media_type": media_type,
+                "storage_path": file_path,
+                "mime_type": mime_type,
+                "file_size_bytes": len(file_bytes),
+            },
+        }
+
+    except Exception:
+        db.rollback()
+
+        if storage_uploaded:
+            try:
+                delete_moment_media(file_path)
+            except Exception:
+                pass
+
+        raise HTTPException(
+            status_code=500,
+            detail="Moment media upload failed",
+        )
+
+    finally:
+        await file.close()
