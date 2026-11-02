@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -31,6 +32,9 @@ from ..services.couple_message_service import (
 )
 
 from ..websocket.couple_manager import couple_manager
+
+# 🧠 AI MOOD CLASSIFIER (Also imports tokenize for dictionary matching)
+from ..ml.mood_model import MoodClassifier, tokenize
 
 
 router = APIRouter(tags=["Couple Realtime"])
@@ -57,6 +61,47 @@ ALLOWED_MOODS = {
 
 # Per-room current mood memory (room_id -> mood key).
 _room_moods: dict[int, str] = {}
+
+# AI CONFIG
+_MOOD_TTL_SECONDS = 86400     # 24h in Redis
+
+# Lazy singleton — an untrained model must NOT break startup
+_mood_ai: MoodClassifier | None = None
+_mood_ai_disabled = False
+
+
+def _get_mood_ai() -> MoodClassifier | None:
+    """
+    Load the classifier the first time it is needed. 
+    """
+    global _mood_ai, _mood_ai_disabled
+
+    if _mood_ai_disabled:
+        return None
+    if _mood_ai is not None:
+        return _mood_ai
+
+    try:
+        clf = MoodClassifier()
+        if clf.total_moods == 0:
+            logger.warning(
+                "MoodClassifier has no training data — auto-mood disabled. "
+                "Run backend/ml/train_mood.py against "
+                "backend/ml/data/mood_dataset.jsonl to enable it."
+            )
+            _mood_ai_disabled = True
+            return None
+        _mood_ai = clf
+        logger.info(
+            "MoodClassifier loaded (%d moods, %d examples)",
+            len(clf.mood_counts), clf.total_moods,
+        )
+    except Exception as e:
+        logger.error("MoodClassifier failed to load: %s", e)
+        _mood_ai_disabled = True
+        return None
+
+    return _mood_ai
 
 
 # =========================================================
@@ -141,7 +186,6 @@ def save_user_offline(db: Session, user_id: int):
 
 async def get_presence_payload(db: Session, user_id: int):
     presence = db.query(CouplePresence).filter(CouplePresence.user_id == user_id).first()
-    # Redis-backed presence is cross-worker correct.
     is_online = await presence_service.is_online(user_id)
 
     if is_online:
@@ -151,6 +195,100 @@ async def get_presence_payload(db: Session, user_id: int):
         "is_online": False,
         "last_seen": (to_utc_iso(presence.last_seen_at) if presence is not None else None),
     }
+
+
+# =========================================================
+# ROOM MOOD — Redis-backed with in-memory fallback
+# =========================================================
+
+async def _get_room_mood(room_id: int) -> str | None:
+    try:
+        from ..core.redis_client import get_redis
+        val = await get_redis().get(f"usanex:couple:mood:{room_id}")
+        if val:
+            return val.decode() if isinstance(val, bytes) else val
+    except Exception:
+        pass
+    return _room_moods.get(room_id)
+
+
+async def _set_room_mood(room_id: int, mood: str) -> None:
+    _room_moods[room_id] = mood
+    try:
+        from ..core.redis_client import get_redis
+        await get_redis().set(
+            f"usanex:couple:mood:{room_id}",
+            mood,
+            ex=_MOOD_TTL_SECONDS,
+        )
+    except Exception:
+        pass
+
+
+# =========================================================
+# DICTIONARY MOOD DETECTION — Splits by space, matches words
+# =========================================================
+
+async def _maybe_auto_mood(
+    room,
+    sender: User,
+    partner: User,
+    content: str | None,
+) -> None:
+    """
+    Word matching based on the dataset. 
+    Splits sentence by spaces and matches words.
+    """
+    if not content:
+        return
+
+    ai = _get_mood_ai()
+    if ai is None:
+        return
+
+    # Split sentence into a set of words (e.g., "I love you" -> {"i", "love", "you"})
+    words = set(tokenize(content))
+    if not words:
+        return
+
+    best_mood = None
+    max_matches = 0
+
+    # Check every mood's dictionary from your dataset
+    for mood, word_counts in ai.word_counts.items():
+        # Count how many words from the message exist in this mood
+        matches = sum(1 for w in words if w in word_counts)
+        
+        # Jis mood mein sabse zyada words match honge, wo jeet jayega
+        if matches > max_matches:
+            max_matches = matches
+            best_mood = mood
+
+    # Agar koi bhi word match nahi hua, toh kuch mat karo
+    if not best_mood or max_matches == 0:
+        return
+
+    # Check if already active to prevent spamming
+    previous = await _get_room_mood(room.id)
+    if previous == best_mood:
+        return
+
+    # Save to Redis and update UI
+    await _set_room_mood(room.id, best_mood)
+
+    mood_payload = {
+        "type": "mood",
+        "mood": best_mood,
+        "user_id": sender.id,
+        "room_id": room.id,
+        "auto": True,
+        "timestamp": utc_now_iso(),
+    }
+
+    await couple_manager.send_to_user(user_id=sender.id, event=mood_payload)
+    await couple_manager.send_to_user(user_id=partner.id, event=mood_payload)
+
+    print(f"🎯 DATASET MATCH: '{content}' -> {best_mood} (Matched words: {max_matches})")
 
 
 # =========================================================
@@ -221,7 +359,7 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
         # Normalize dict (Redis cache) vs UserSession (DB)
         if isinstance(session, dict):
             session_user_id = session.get("user_id")
-            session_active = True  # only valid sessions are cached
+            session_active = True
         else:
             session_user_id = session.user_id
             session_active = getattr(session, "is_active", True)
@@ -285,11 +423,11 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
             "room_id": room.id,
             "partner_online": partner_presence["is_online"],
             "partner_last_seen": partner_presence["last_seen"],
-            "mood": _room_moods.get(room.id),
+            "mood": await _get_room_mood(room.id),
             "timestamp": utc_now_iso(),
         })
 
-        # MESSAGE HISTORY (cache-first; may return dicts or ORM objects)
+        # MESSAGE HISTORY
         messages = await get_couple_messages(db=db, room_id=room.id, limit=50)
         await websocket.send_json({
             "type": "message_history",
@@ -360,13 +498,14 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
                     await send_error(websocket, "Unknown mood")
                     continue
 
-                _room_moods[room.id] = mood
+                await _set_room_mood(room.id, mood)
 
                 mood_payload = {
                     "type": "mood",
                     "mood": mood,
                     "user_id": current_user.id,
                     "room_id": room.id,
+                    "auto": False,
                     "timestamp": utc_now_iso(),
                 }
 
@@ -443,13 +582,12 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
                     if not await idempotency.acquire(idem_key):
                         cached_payload = await idempotency.get_result(idem_key)
                         if cached_payload:
-                            # Replay the exact previous response
                             await websocket.send_json(cached_payload)
                         else:
                             await send_error(websocket, "Message is being processed")
                         continue
 
-                # -------- CREATE MESSAGE (async, writes Redis cache) --------
+                # -------- CREATE MESSAGE --------
                 try:
                     message = await create_couple_message(
                         db=db,
@@ -482,7 +620,6 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
                     "timestamp": to_utc_iso(message.created_at),
                 }
 
-                # Store the result so replays are dedup-safe
                 if idem_key:
                     await idempotency.store_result(idem_key, message_payload)
 
@@ -512,6 +649,17 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
                         "status": "sent",
                         "timestamp": utc_now_iso(),
                     })
+
+                # 🧠 DICTIONARY WORD MATCHING AUTO-MOOD
+                try:
+                    await _maybe_auto_mood(
+                        room=room,
+                        sender=current_user,
+                        partner=partner,
+                        content=content,
+                    )
+                except Exception:
+                    logger.exception("auto-mood failed for room %s", room.id)
                 continue
 
             # MESSAGE DELIVERED
@@ -560,7 +708,7 @@ async def couple_realtime(websocket: WebSocket, partner_user_id: str):
                     )
                 continue
 
-            # PING — HEARTBEAT (also refreshes Redis presence TTL)
+            # PING — HEARTBEAT
             if event_type == "ping":
                 await couple_manager.touch(websocket)
                 try:

@@ -1,11 +1,14 @@
 # backend/routes/couple_chat.py
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header
+from sqlalchemy.orm import Session
 from backend.database.database import get_db
 from backend.database.couple_models import CoupleMessage
 from backend.services.redis import message_cache, idempotency
-from backend.websocket.couple_manager import manager
+from backend.websocket.couple_manager import couple_manager as manager
+from backend.ml.mood_model import MoodClassifier # 🧠 AI Import kiya
 
 router = APIRouter()
+mood_ai = MoodClassifier() # 🧠 AI Load kiya
 
 @router.post("/messages")
 async def send_message(
@@ -13,14 +16,12 @@ async def send_message(
     receiver_id: int,
     room_id: int,
     content: str,
-    idem_key: str = Header(..., alias="Idempotency-Key"), # Prevents double sends
+    idem_key: str = Header(..., alias="Idempotency-Key"),
     db: Session = Depends(get_db)
 ):
-    # 1. Idempotency Check
     if not await idempotency.check_and_lock(idem_key):
-        return {"status": "duplicate", "message": "Already processing"}
+        return {"status": "duplicate"}
 
-    # 2. Save to DB
     new_msg = CoupleMessage(
         room_id=room_id, sender_id=sender_id, 
         receiver_id=receiver_id, content=content
@@ -29,14 +30,12 @@ async def send_message(
     db.commit()
     db.refresh(new_msg)
 
-    # 3. Cache in Redis (Recent 50 msgs list)
     await message_cache.push_message(new_msg)
-    
-    # 4. Increment Receiver's Unread Counter in Redis
     await message_cache.incr_unread(receiver_id, room_id)
 
-    # 5. Send Real-time via WebSocket (Pub/Sub)
+    # Message payload
     ws_payload = {
+        "type": "message",
         "id": new_msg.id,
         "room_id": room_id,
         "sender_id": sender_id,
@@ -44,5 +43,18 @@ async def send_message(
         "created_at": new_msg.created_at.isoformat()
     }
     await manager.send_personal_message(receiver_id, ws_payload)
+    await manager.send_personal_message(sender_id, ws_payload)
+
+    # 🧠 AI MOOD DETECTION MAGIC YAHAN HAI
+    detected_mood = mood_ai.predict(content)
+    if detected_mood:
+        print(f"🧠 AI Detected Mood: {detected_mood}") # Terminal me check karne ke liye
+        mood_payload = {
+            "type": "mood",
+            "mood": detected_mood
+        }
+        # Sender aur Receiver dono ko signal bhejo
+        await manager.send_personal_message(receiver_id, mood_payload)
+        await manager.send_personal_message(sender_id, mood_payload)
 
     return {"status": "success", "msg_id": new_msg.id}
