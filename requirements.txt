@@ -9,3 +9,4 @@ cloudinary>=1.40
 python-multipart>=0.0.9
 redis>=5.0
 websockets>=12.0
+supabase
