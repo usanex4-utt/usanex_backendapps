@@ -274,3 +274,69 @@ async def delete_moment(
             status_code=500,
             detail="Moment deletion failed",
         )
+
+class UpdateMomentRequest(BaseModel):
+    caption: str = Field(min_length=1, max_length=2000)
+    audience: Literal["connections", "only_me"]
+    moment_scope: Literal["normal", "couple"]
+
+
+@router.put("/{moment_id}")
+async def update_moment(
+    moment_id: int,
+    payload: UpdateMomentRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = await get_authenticated_user(request, db)
+
+    try:
+        result = db.execute(
+            text("""
+                UPDATE nex_moments
+                SET
+                    caption = :caption,
+                    audience = :audience,
+                    moment_scope = :moment_scope
+                WHERE id = :moment_id
+                  AND user_id = :user_id
+                  AND deleted_at IS NULL
+                  AND archived_at IS NULL
+                  AND expires_at > NOW()
+                  AND moderation_status = 'active'
+                RETURNING id, user_id, caption, audience,
+                          moment_scope, created_at, expires_at
+            """),
+            {
+                "moment_id": moment_id,
+                "user_id": user.user_id,
+                "caption": payload.caption.strip(),
+                "audience": payload.audience,
+                "moment_scope": payload.moment_scope,
+            },
+        ).mappings().first()
+
+        if result is None:
+            db.rollback()
+            raise HTTPException(
+                status_code=404,
+                detail="Moment not found or cannot be edited",
+            )
+
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "Moment updated successfully",
+            "moment": dict(result),
+        }
+
+    except HTTPException:
+        raise
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Moment update failed",
+        )
