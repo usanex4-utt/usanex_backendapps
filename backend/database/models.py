@@ -131,6 +131,10 @@ class User(Base):
         nullable=False,
         default=False,
     )
+    is_admin = Column(
+        Boolean, 
+        nullable=False,
+        default=False)
 
     __table_args__ = (
         Index(
