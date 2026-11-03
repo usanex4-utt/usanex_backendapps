@@ -190,7 +190,7 @@ async def get_audience_users(
     try:
         rows = db.execute(
             text("""
-                WITH current_user AS (
+                 WITH logged_in_user AS ((
                     SELECT id, user_id
                     FROM public.users
                     WHERE user_id = :user_id
@@ -201,7 +201,7 @@ async def get_audience_users(
                     u.username,
                     u.profile_photo
                 FROM public.users u
-                CROSS JOIN current_user me
+                CROSS JOIN logged_in_user me
                 WHERE
                     u.id != me.id
                     AND (
