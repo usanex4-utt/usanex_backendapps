@@ -190,7 +190,7 @@ async def get_audience_users(
     try:
         rows = db.execute(
             text("""
-                 WITH logged_in_user AS ((
+                 WITH logged_in_user AS (
                     SELECT id, user_id
                     FROM public.users
                     WHERE user_id = :user_id
