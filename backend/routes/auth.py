@@ -122,15 +122,7 @@ async def get_valid_session(
     if not session_token:
         return None
 
-    # 1. Check Redis first
-    cached_session = await session_service.get_session(
-        session_token
-    )
-
-    if cached_session:
-        return cached_session
-
-    # 2. Database fallback
+    # Database is the source of truth for session validity
     session = (
         db.query(UserSession)
         .filter(
@@ -140,11 +132,18 @@ async def get_valid_session(
     )
 
     if session is None:
+        await session_service.delete_session(session_token)
         return None
 
+    # Check database active status
     if not getattr(session, "is_active", True):
+        await session_service.delete_session(
+            session_token,
+            session.user_id,
+        )
         return None
 
+    # Check expiry
     expires_at = session.expires_at
 
     if expires_at.tzinfo is None:
@@ -157,12 +156,12 @@ async def get_valid_session(
         db.commit()
 
         await session_service.delete_session(
-            session_token
+            session_token,
+            session.user_id,
         )
-
         return None
 
-    # Restore cache
+    # Refresh Redis cache only after database validation
     await session_service.cache_session(
         session_token,
         session.user_id,
@@ -170,6 +169,9 @@ async def get_valid_session(
     )
 
     return session
+
+
+
 
 
 # =========================================================
