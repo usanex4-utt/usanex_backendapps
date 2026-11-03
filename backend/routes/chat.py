@@ -275,8 +275,8 @@ async def save_upload(file: UploadFile):
         )
 
     upload_dir = (
-        Path(__file__).resolve().parents[2]
-        / "frontend" / "static" / "uploads" / "chat"
+         Path(__file__).resolve().parents[1]
+        / "static" / "uploads" / "chat"
     )
     upload_dir.mkdir(parents=True, exist_ok=True)
 
