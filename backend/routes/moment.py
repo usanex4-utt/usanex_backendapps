@@ -1,4 +1,4 @@
-from fastapi import Query
+
 import json
 import logging
 import uuid
@@ -12,6 +12,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -67,18 +68,37 @@ NORMAL_AUDIENCES = {
 }
 
 
+def normalize_selected_user_ids(
+    selected_user_ids: list[str] | None,
+) -> list[str]:
+    """Remove blank IDs, whitespace and duplicates."""
+
+    return list(
+        dict.fromkeys(
+            user_id.strip()
+            for user_id in (selected_user_ids or [])
+            if user_id and user_id.strip()
+        )
+    )
+
+
 def validate_moment_audience(
     audience: str,
     moment_scope: str,
-    selected_user_ids: list[str],
+    selected_user_ids: list[str] | None,
 ):
+    selected_user_ids = normalize_selected_user_ids(
+        selected_user_ids
+    )
+
     if moment_scope == "couple":
         if audience != "only_me" or selected_user_ids:
             raise HTTPException(
                 status_code=400,
                 detail="Couple Moment must use only_me audience",
             )
-        return
+
+        return selected_user_ids
 
     if moment_scope != "normal":
         raise HTTPException(
@@ -101,8 +121,13 @@ def validate_moment_audience(
     if audience != "selected_people" and selected_user_ids:
         raise HTTPException(
             status_code=400,
-            detail="Selected users are only allowed for selected_people audience",
+            detail=(
+                "Selected users are only allowed "
+                "for selected_people audience"
+            ),
         )
+
+    return selected_user_ids
 
 
 def save_moment_audience(
@@ -111,13 +136,8 @@ def save_moment_audience(
     selected_user_ids: list[str],
     creator_user_id: str,
 ):
-    # Remove whitespace and duplicate IDs
-    selected_user_ids = list(
-        dict.fromkeys(
-            user_id.strip()
-            for user_id in selected_user_ids
-            if user_id and user_id.strip()
-        )
+    selected_user_ids = normalize_selected_user_ids(
+        selected_user_ids
     )
 
     if len(selected_user_ids) > 500:
@@ -127,24 +147,60 @@ def save_moment_audience(
         )
 
     if selected_user_ids:
-        valid_users = db.execute(
+        eligible_users = db.execute(
             text("""
-                SELECT user_id
-                FROM public.users
-                WHERE user_id = ANY(:user_ids)
+                SELECT DISTINCT selected.user_id
+                FROM public.users creator
+                JOIN public.users selected
+                    ON selected.user_id = ANY(:user_ids)
+                WHERE creator.user_id = :creator_user_id
+                  AND creator.id != selected.id
+                  AND (
+                      EXISTS (
+                          SELECT 1
+                          FROM public.user_connections c
+                          WHERE c.status = 'connected'
+                            AND (
+                                (
+                                    c.user_one_id = creator.id
+                                    AND c.user_two_id = selected.id
+                                )
+                                OR
+                                (
+                                    c.user_two_id = creator.id
+                                    AND c.user_one_id = selected.id
+                                )
+                            )
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public.user_follows f
+                          WHERE f.follower_id = creator.id
+                            AND f.following_id = selected.id
+                      )
+                      OR EXISTS (
+                          SELECT 1
+                          FROM public.user_follows f
+                          WHERE f.follower_id = selected.id
+                            AND f.following_id = creator.id
+                      )
+                  )
             """),
             {
                 "user_ids": selected_user_ids,
+                "creator_user_id": creator_user_id,
             },
         ).scalars().all()
 
-        if set(valid_users) != set(selected_user_ids):
+        if set(eligible_users) != set(selected_user_ids):
             raise HTTPException(
                 status_code=400,
-                detail="One or more selected users do not exist",
+                detail=(
+                    "Selected users must belong to your "
+                    "connections, following, or followers"
+                ),
             )
 
-    # Replace the existing selected audience list
     db.execute(
         text("""
             DELETE FROM public.nex_moment_audience
@@ -171,6 +227,8 @@ def save_moment_audience(
                 for user_id in selected_user_ids
             ],
         )
+
+
 # --------------------------------------------------
 # AUDIENCE USERS LIST
 # --------------------------------------------------
@@ -190,7 +248,7 @@ async def get_audience_users(
     try:
         rows = db.execute(
             text("""
-                 WITH logged_in_user AS (
+                WITH logged_in_user AS (
                     SELECT id, user_id
                     FROM public.users
                     WHERE user_id = :user_id
@@ -268,6 +326,7 @@ async def get_audience_users(
             detail="Unable to fetch audience users",
         )
 
+
 # --------------------------------------------------
 # HEALTH
 # --------------------------------------------------
@@ -335,12 +394,10 @@ async def create_moment(
 ):
     user = await get_authenticated_user(request, db)
 
-    selected_user_ids = payload.selected_user_ids
-
-    validate_moment_audience(
+    selected_user_ids = validate_moment_audience(
         payload.audience,
         payload.moment_scope,
-        selected_user_ids,
+        payload.selected_user_ids,
     )
 
     try:
@@ -394,6 +451,7 @@ async def create_moment(
             db,
             result["id"],
             selected_user_ids,
+            user.user_id,
         )
 
         db.commit()
@@ -600,7 +658,7 @@ async def update_moment(
 ):
     user = await get_authenticated_user(request, db)
 
-    validate_moment_audience(
+    selected_user_ids = validate_moment_audience(
         payload.audience,
         payload.moment_scope,
         payload.selected_user_ids,
@@ -649,7 +707,8 @@ async def update_moment(
         save_moment_audience(
             db,
             moment_id,
-            payload.selected_user_ids,
+            selected_user_ids,
+            user.user_id,
         )
 
         db.commit()
@@ -740,7 +799,7 @@ async def upload_moment(
 ):
     user = await get_authenticated_user(request, db)
 
-    validate_moment_audience(
+    selected_user_ids = validate_moment_audience(
         audience,
         moment_scope,
         selected_user_ids,
@@ -880,6 +939,7 @@ async def upload_moment(
             db,
             moment_id,
             selected_user_ids,
+            user.user_id,
         )
 
         db.commit()
