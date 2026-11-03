@@ -3,6 +3,7 @@ from typing import Optional, Union
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
+from ..schemas.couple import CoupleMessageResponse, CoupleMessageReceiptResponse
 from ..database.couple_models import (
     CoupleRoom,
     CoupleMessage,
@@ -136,23 +137,11 @@ def mark_message_seen(db: Session, message_id: int, receiver_id: int) -> CoupleM
     return row
 
 
-def serialize_message(m: Union[CoupleMessage, dict]) -> dict:
-    if isinstance(m, dict): return m
-    return {
-        "id": m.id, "room_id": m.room_id, "sender_id": m.sender_id, "receiver_id": m.receiver_id,
-        "content": m.content, "media_url": m.media_url, "media_type": m.media_type,
-        "message_type": m.message_type, "reply_to_message_id": m.reply_to_message_id,
-        "is_deleted": bool(m.is_deleted), "is_edited": bool(m.is_edited),
-        "ai_mode": m.ai_mode, "ai_emotion": m.ai_emotion, "ai_intent": m.ai_intent,
-        "ai_intensity": m.ai_intensity, "ai_theme": m.ai_theme,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
-    }
+
+def serialize_message(m: Union[CoupleMessage, dict]) -> CoupleMessageResponse:
+    """Works for ORM rows AND cached dicts (both converted by Pydantic)."""
+    return CoupleMessageResponse.model_validate(m)
 
 
-def serialize_receipt(r: CoupleMessageReceipt) -> dict:
-    return {
-        "id": r.id, "message_id": r.message_id, "receiver_id": r.receiver_id,
-        "delivered": bool(r.delivered), "delivered_at": r.delivered_at.isoformat() if r.delivered_at else None,
-        "seen": bool(r.seen), "seen_at": r.seen_at.isoformat() if r.seen_at else None,
-    }
+def serialize_receipt(r: CoupleMessageReceipt) -> CoupleMessageReceiptResponse:
+    return CoupleMessageReceiptResponse.model_validate(r)

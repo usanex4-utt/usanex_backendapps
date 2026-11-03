@@ -1,7 +1,4 @@
-# =========================================================
-# USANEX — NEXA ENGINE (offline retrieval + math + memory)
-# =========================================================
-
+# backend/services/nexa_engine.py
 import json
 import re
 from pathlib import Path
@@ -14,27 +11,34 @@ _MODEL_FILE = _DATA_DIR / "nexa_model.json"
 _TRAIN_FILE = _DATA_DIR / "train.jsonl"
 _CHECKPOINT_FILE = _DATA_DIR / "nexa_brain_v0_16_trained.pt"
 
-# Simple in-memory conversation store (resets on process restart).
 _conversations: dict[str, list[dict]] = {}
 _MAX_HISTORY = 20
 
+# 👇 NEW — one-time caches
+_MODEL_CACHE: Optional[dict] = None
+_EXAMPLES_CACHE: Optional[list[dict]] = None
 
-# ---------------------------------------------------------
-# Loading
-# ---------------------------------------------------------
 
 def _load_model() -> Optional[dict]:
+    global _MODEL_CACHE
+    if _MODEL_CACHE is not None:
+        return _MODEL_CACHE
     if not _MODEL_FILE.exists():
         return None
     try:
-        return json.loads(_MODEL_FILE.read_text(encoding="utf-8"))
+        _MODEL_CACHE = json.loads(_MODEL_FILE.read_text(encoding="utf-8"))
     except Exception:
-        return None
+        _MODEL_CACHE = None
+    return _MODEL_CACHE
 
 
 def _load_examples() -> list[dict]:
+    global _EXAMPLES_CACHE
+    if _EXAMPLES_CACHE is not None:
+        return _EXAMPLES_CACHE
     if not _TRAIN_FILE.exists():
-        return []
+        _EXAMPLES_CACHE = []
+        return _EXAMPLES_CACHE
     examples: list[dict] = []
     with _TRAIN_FILE.open(encoding="utf-8") as fh:
         for line in fh:
@@ -47,12 +51,9 @@ def _load_examples() -> list[dict]:
                 continue
             if item.get("question") and item.get("answer"):
                 examples.append(item)
-    return examples
+    _EXAMPLES_CACHE = examples
+    return _EXAMPLES_CACHE
 
-
-# ---------------------------------------------------------
-# Scoring
-# ---------------------------------------------------------
 
 def _tokens(text: str) -> set[str]:
     return set(re.findall(r"[a-z0-9@']+", text.lower()))
@@ -64,14 +65,11 @@ def _score(question_tokens: set[str], example: dict) -> float:
     example_tokens = _tokens(example.get("question", ""))
     if not example_tokens:
         return 0.0
-
     overlap = len(question_tokens & example_tokens)
     union = len(question_tokens | example_tokens)
-
     precision = overlap / len(question_tokens)
     recall = overlap / len(example_tokens)
     jaccard = overlap / union if union else 0.0
-
     return max(jaccard, 0.6 * precision + 0.4 * recall)
 
 
@@ -79,25 +77,18 @@ def _retrieve(message: str) -> Optional[str]:
     examples = _load_examples()
     if not examples:
         return None
-
     qtokens = _tokens(message)
     best: Optional[dict] = None
     best_score = 0.0
-
     for ex in examples:
         s = _score(qtokens, ex)
         if s > best_score:
             best_score = s
             best = ex
-
     if best_score < 0.25 or best is None:
         return None
     return best.get("answer")
 
-
-# ---------------------------------------------------------
-# Small math engine
-# ---------------------------------------------------------
 
 _ALLOWED_MATH = re.compile(r"^[0-9+\-*/().^%\s]+$")
 
@@ -115,18 +106,10 @@ def _math(message: str) -> Optional[str]:
         return None
 
 
-# ---------------------------------------------------------
-# Greeting
-# ---------------------------------------------------------
-
 _GREETING = re.compile(
     r"\b(hi|hello|hey|namaste|namaskar|salam)\b", re.IGNORECASE
 )
 
-
-# ---------------------------------------------------------
-# Public API
-# ---------------------------------------------------------
 
 def generate_reply(
     message: str,
@@ -168,7 +151,6 @@ def generate_reply(
 def inspect_trained_checkpoint() -> dict:
     if not _CHECKPOINT_FILE.exists():
         return {"available": False, "path": None}
-
     try:
         return {
             "available": True,

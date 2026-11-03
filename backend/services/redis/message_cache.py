@@ -23,13 +23,22 @@ def _serialize(msg) -> dict:
         "reply_to_message_id": getattr(msg, "reply_to_message_id", None),
         "is_read": bool(getattr(msg, "is_read", 0)),
         "is_deleted": bool(getattr(msg, "is_deleted", 0)),
+        # 👇 NEW — required by CoupleMessageResponse
+        "is_edited": bool(getattr(msg, "is_edited", 0)),
+        "ai_mode": getattr(msg, "ai_mode", None),
+        "ai_emotion": getattr(msg, "ai_emotion", None),
+        "ai_intent": getattr(msg, "ai_intent", None),
+        "ai_intensity": getattr(msg, "ai_intensity", None),
+        "ai_theme": getattr(msg, "ai_theme", None),
         "created_at": msg.created_at.isoformat() if msg.created_at else None,
+        # 👇 NEW — required by both Couple/Chat schemas
+        "updated_at": (
+            msg.updated_at.isoformat()
+            if getattr(msg, "updated_at", None)
+            else None
+        ),
     }
 
-
-# ---------------------------------------------------------
-# Couple room messages (uses room_id)
-# ---------------------------------------------------------
 
 async def push_message(msg) -> None:
     try:
@@ -42,9 +51,11 @@ async def push_message(msg) -> None:
         logger.warning("push_message failed: %s", e)
 
 
-async def get_recent(room_id: int) -> list[dict] | None:
+async def get_recent(room_id: int):
     try:
-        rows = await get_redis().lrange(keys.recent_messages(room_id), 0, RECENT_LIMIT - 1)
+        rows = await get_redis().lrange(
+            keys.recent_messages(room_id), 0, RECENT_LIMIT - 1
+        )
         return [json.loads(x) for x in rows] if rows else None
     except Exception as e:
         logger.warning("get_recent failed: %s", e)
@@ -58,10 +69,6 @@ async def invalidate_room(room_id: int) -> None:
         pass
 
 
-# ---------------------------------------------------------
-# Chat DMs (uses sorted pair key)
-# ---------------------------------------------------------
-
 async def push_chat_message(msg) -> None:
     try:
         r = get_redis()
@@ -73,7 +80,7 @@ async def push_chat_message(msg) -> None:
         logger.warning("push_chat_message failed: %s", e)
 
 
-async def get_recent_chat(user_a: int, user_b: int, limit: int = 50) -> list[dict] | None:
+async def get_recent_chat(user_a: int, user_b: int, limit: int = 50):
     try:
         key = keys.room_pair(user_a, user_b)
         rows = await get_redis().lrange(key, 0, min(limit, RECENT_LIMIT) - 1)
@@ -89,10 +96,6 @@ async def invalidate_chat(user_a: int, user_b: int) -> None:
     except Exception:
         pass
 
-
-# ---------------------------------------------------------
-# Unread counters (already existed)
-# ---------------------------------------------------------
 
 async def incr_unread(user_id: int, room_id: int) -> None:
     try:

@@ -2,7 +2,7 @@
 import logging
 from fastapi import WebSocket
 
-from backend.services.redis import presence_service
+from backend.services.presence import add_connection, remove_connection
 from .redis_manager import redis_ws_manager
 
 logger = logging.getLogger(__name__)
@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 class ChatConnectionManager:
     def __init__(self):
-        # Multiple tabs / devices per user.
         self.active_connections: dict[int, set[WebSocket]] = {}
         redis_ws_manager.register("chat", self._handle_redis_message)
 
@@ -22,43 +21,42 @@ class ChatConnectionManager:
         if not sockets:
             return
         payload = data.get("payload")
+        if not isinstance(payload, dict):
+            return
+
         for ws in sockets:
             try:
                 await ws.send_json(payload)
             except Exception as e:
-                logger.error("Chat WS send error for user %s: %s", receiver_id, e)
-                self._remove(receiver_id, ws)
+                logger.error(
+                    "Chat WS send error for user %s: %s", receiver_id, e
+                )
+                await self._remove(receiver_id, ws)
 
-    def _remove(self, user_id: int, ws: WebSocket):
+    async def _remove(self, user_id: int, ws: WebSocket):
         sockets = self.active_connections.get(user_id)
         if not sockets:
             return
         sockets.discard(ws)
         if not sockets:
             self.active_connections.pop(user_id, None)
+            # 👇 FIX: decrement global presence ref-count
+            await remove_connection(user_id)
 
-    # ---------------- Lifecycle ----------------
     async def connect(self, user_id: int, websocket: WebSocket) -> bool:
-        """Returns True if this is the user's FIRST socket (just came online)."""
-        first = user_id not in self.active_connections
         self.active_connections.setdefault(user_id, set()).add(websocket)
-        if first:
-            await presence_service.set_online(user_id)
-        return first
+        return await add_connection(user_id)
 
     async def disconnect(self, user_id: int, websocket: WebSocket) -> bool:
-        """Returns True if this was the user's LAST socket (now offline)."""
-        self._remove(user_id, websocket)
-        if user_id not in self.active_connections:
-            await presence_service.set_offline(user_id)
-            return True
-        return False
+        await self._remove(user_id, websocket)
+        return user_id not in self.active_connections
 
     def is_online(self, user_id: int) -> bool:
         return user_id in self.active_connections
 
-    # ---------------- Events ----------------
-    async def send_presence(self, receiver_id, user_id, is_online, last_seen=None) -> bool:
+    async def send_presence(
+        self, receiver_id, user_id, is_online, last_seen=None
+    ) -> bool:
         return await self.send_to_user(receiver_id, {
             "type": "presence",
             "user_id": user_id,
@@ -77,8 +75,7 @@ class ChatConnectionManager:
         local = user_id in self.active_connections
         try:
             await redis_ws_manager.publish(
-                {"receiver_id": user_id, "payload": event},
-                scope="chat",
+                {"receiver_id": user_id, "payload": event}, scope="chat"
             )
         except Exception as e:
             logger.error("Chat Redis publish failed: %s", e)
