@@ -138,10 +138,51 @@ def mark_message_seen(db: Session, message_id: int, receiver_id: int) -> CoupleM
 
 
 
-def serialize_message(m: Union[CoupleMessage, dict]) -> CoupleMessageResponse:
-    """Works for ORM rows AND cached dicts (both converted by Pydantic)."""
-    return CoupleMessageResponse.model_validate(m)
+def serialize_message(m: Union[CoupleMessage, dict]) -> dict:
+    """Always return a plain dict so WebSocket / JSON can serialize it."""
+    if isinstance(m, dict):
+        # already a dict from Redis cache
+        return {
+            "id": m.get("id"),
+            "room_id": m.get("room_id"),
+            "sender_id": m.get("sender_id"),
+            "receiver_id": m.get("receiver_id"),
+            "content": m.get("content"),
+            "media_url": m.get("media_url"),
+            "media_type": m.get("media_type"),
+            "message_type": m.get("message_type") or "text",
+            "reply_to_message_id": m.get("reply_to_message_id"),
+            "is_deleted": bool(m.get("is_deleted", False)),
+            "is_edited": bool(m.get("is_edited", False)),
+            "ai_mode": m.get("ai_mode"),
+            "ai_emotion": m.get("ai_emotion"),
+            "ai_intent": m.get("ai_intent"),
+            "ai_intensity": m.get("ai_intensity"),
+            "ai_theme": m.get("ai_theme"),
+            "created_at": m.get("created_at"),
+            "updated_at": m.get("updated_at"),
+        }
 
+    return {
+        "id": m.id,
+        "room_id": m.room_id,
+        "sender_id": m.sender_id,
+        "receiver_id": m.receiver_id,
+        "content": m.content,
+        "media_url": m.media_url,
+        "media_type": m.media_type,
+        "message_type": m.message_type or "text",
+        "reply_to_message_id": m.reply_to_message_id,
+        "is_deleted": bool(m.is_deleted),
+        "is_edited": bool(m.is_edited),
+        "ai_mode": m.ai_mode,
+        "ai_emotion": m.ai_emotion,
+        "ai_intent": m.ai_intent,
+        "ai_intensity": m.ai_intensity,
+        "ai_theme": m.ai_theme,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+    }
 
 def serialize_receipt(r: CoupleMessageReceipt) -> CoupleMessageReceiptResponse:
     return CoupleMessageReceiptResponse.model_validate(r)

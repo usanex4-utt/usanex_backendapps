@@ -1,7 +1,9 @@
 # =========================================================
 # USANEX — FASTAPI APPLICATION ENTRY POINT
 # =========================================================
-
+from .config import settings
+from .database.database import engine, Base
+from .core.redis_client import init_redis
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
