@@ -1,3 +1,4 @@
+from fastapi import Query
 import json
 import logging
 import uuid
@@ -108,6 +109,7 @@ def save_moment_audience(
     db: Session,
     moment_id: int,
     selected_user_ids: list[str],
+    creator_user_id: str,
 ):
     # Remove whitespace and duplicate IDs
     selected_user_ids = list(
@@ -169,7 +171,102 @@ def save_moment_audience(
                 for user_id in selected_user_ids
             ],
         )
+# --------------------------------------------------
+# AUDIENCE USERS LIST
+# --------------------------------------------------
 
+@router.get("/audience-users")
+async def get_audience_users(
+    request: Request,
+    type: Literal[
+        "connections",
+        "following",
+        "followers",
+    ] = Query("connections"),
+    db: Session = Depends(get_db),
+):
+    user = await get_authenticated_user(request, db)
+
+    try:
+        rows = db.execute(
+            text("""
+                WITH current_user AS (
+                    SELECT id, user_id
+                    FROM public.users
+                    WHERE user_id = :user_id
+                )
+                SELECT DISTINCT
+                    u.user_id,
+                    u.name,
+                    u.username,
+                    u.profile_photo
+                FROM public.users u
+                CROSS JOIN current_user me
+                WHERE
+                    u.id != me.id
+                    AND (
+                        (
+                            :audience_type = 'connections'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM public.user_connections c
+                                WHERE c.status = 'connected'
+                                  AND (
+                                      (
+                                          c.user_one_id = me.id
+                                          AND c.user_two_id = u.id
+                                      )
+                                      OR
+                                      (
+                                          c.user_two_id = me.id
+                                          AND c.user_one_id = u.id
+                                      )
+                                  )
+                            )
+                        )
+                        OR
+                        (
+                            :audience_type = 'following'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM public.user_follows f
+                                WHERE f.follower_id = me.id
+                                  AND f.following_id = u.id
+                            )
+                        )
+                        OR
+                        (
+                            :audience_type = 'followers'
+                            AND EXISTS (
+                                SELECT 1
+                                FROM public.user_follows f
+                                WHERE f.follower_id = u.id
+                                  AND f.following_id = me.id
+                            )
+                        )
+                    )
+                ORDER BY u.name ASC
+            """),
+            {
+                "user_id": user.user_id,
+                "audience_type": type,
+            },
+        ).mappings().all()
+
+        return {
+            "success": True,
+            "type": type,
+            "count": len(rows),
+            "users": [dict(row) for row in rows],
+        }
+
+    except Exception:
+        logger.exception("Audience users fetch failed")
+
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to fetch audience users",
+        )
 
 # --------------------------------------------------
 # HEALTH
