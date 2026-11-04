@@ -1,4 +1,3 @@
-
 import logging
 
 from sqlalchemy import text
@@ -9,12 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def cleanup_expired_normal_moments(dry_run=True):
-    """
-    Find expired Normal Moment media.
-
-    Dry run is enabled by default.
-    No Storage or database records are deleted.
-    """
+    """Find expired Normal Moment media without deleting anything."""
 
     with engine.connect() as conn:
         result = conn.execute(text("""
