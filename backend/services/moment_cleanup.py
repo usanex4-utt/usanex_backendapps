@@ -10,16 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 def storage_file_exists(bucket, file_path):
-    """Check whether an exact file exists in Supabase Storage."""
-
     folder, filename = file_path.rsplit("/", 1)
 
     files = bucket.list(
         folder,
-        {
-            "search": filename,
-            "limit": 100
-        }
+        {"search": filename, "limit": 100}
     )
 
     return any(
@@ -29,10 +24,7 @@ def storage_file_exists(bucket, file_path):
 
 
 def cleanup_expired_normal_moments(dry_run=True):
-    """Verify expired Normal Moment files without deleting anything."""
-
-    if not dry_run:
-        raise RuntimeError("Storage verification only. Deletion is disabled.")
+    """Clean expired Normal Moment media only."""
 
     with engine.connect() as conn:
         result = conn.execute(text("""
@@ -53,7 +45,9 @@ def cleanup_expired_normal_moments(dry_run=True):
 
     bucket = get_supabase_client().storage.from_("nex-moments")
 
-    verified = []
+    deleted_records = 0
+    deleted_files = 0
+    failed = 0
 
     for media in media_rows:
         paths = list(dict.fromkeys(
@@ -63,34 +57,69 @@ def cleanup_expired_normal_moments(dry_run=True):
             ) if path
         ))
 
-        for path in paths:
-            exists = storage_file_exists(bucket, path)
+        if not paths:
+            logger.warning(
+                "Skipped media_id=%s: no storage paths",
+                media["media_id"]
+            )
+            failed += 1
+            continue
+
+        try:
+            if dry_run:
+                for path in paths:
+                    logger.info(
+                        "DRY RUN: media_id=%s path=%s exists=%s",
+                        media["media_id"],
+                        path,
+                        storage_file_exists(bucket, path)
+                    )
+                continue
+
+            response = bucket.remove(paths)
+
+            if not isinstance(response, list):
+                raise RuntimeError("Invalid Storage deletion response")
+
+            remaining = [
+                path for path in paths
+                if storage_file_exists(bucket, path)
+            ]
+
+            if remaining:
+                raise RuntimeError(
+                    f"Storage verification failed: {remaining}"
+                )
+
+            with engine.begin() as conn:
+                conn.execute(
+                    text("""
+                        DELETE FROM nex_moment_media
+                        WHERE id = :media_id
+                    """),
+                    {"media_id": media["media_id"]}
+                )
+
+            deleted_records += 1
+            deleted_files += len(response)
 
             logger.info(
-                "STORAGE CHECK: moment_id=%s media_id=%s path=%s exists=%s",
+                "CLEANUP SUCCESS: moment_id=%s media_id=%s",
                 media["moment_id"],
-                media["media_id"],
-                path,
-                exists
+                media["media_id"]
             )
 
-            verified.append({
-                "moment_id": media["moment_id"],
-                "media_id": media["media_id"],
-                "storage_path": path,
-                "exists": exists
-            })
+        except Exception:
+            failed += 1
+            logger.exception(
+                "Cleanup failed for media_id=%s",
+                media["media_id"]
+            )
 
-    result = {
-        "dry_run": True,
+    return {
+        "dry_run": dry_run,
         "found": len(media_rows),
-        "checked_files": len(verified),
-        "existing_files": sum(1 for item in verified if item["exists"]),
-        "missing_files": sum(1 for item in verified if not item["exists"]),
-        "files": verified,
-        "deleted": 0
+        "deleted_records": deleted_records,
+        "deleted_files": deleted_files,
+        "failed": failed
     }
-
-    logger.info("STORAGE VERIFICATION COMPLETE: %s", result)
-
-    return result
