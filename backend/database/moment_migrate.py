@@ -2,8 +2,7 @@
 """
 Idempotent moment schema migration.
 - Safe to call multiple times.
-- Thread-safe (uses a lock + module-level flag).
-- Splits DDL into individual statements so one failure does not block others.
+- Adds missing columns to existing tables.
 """
 import logging
 from threading import Lock
@@ -38,6 +37,9 @@ _DDL = [
     "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS metadata JSONB NOT NULL DEFAULT '{}'::jsonb",
     "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ",
     "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ",
+    "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS audience VARCHAR(30) NOT NULL DEFAULT 'connections'",
+    "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS moment_scope VARCHAR(20) NOT NULL DEFAULT 'normal'",
+    "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ",
     "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS admin_moderation_reason TEXT",
     "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS admin_hidden_at TIMESTAMPTZ",
     "ALTER TABLE nex_moments ADD COLUMN IF NOT EXISTS admin_hidden_by VARCHAR(30)",
@@ -57,6 +59,7 @@ _DDL = [
         UNIQUE (moment_id, allowed_user_id)
     )
     """,
+    "ALTER TABLE nex_moment_audience ADD COLUMN IF NOT EXISTS allowed_user_id VARCHAR(30)",
     "CREATE INDEX IF NOT EXISTS ix_nex_moment_audience_m ON nex_moment_audience(moment_id)",
 
     # ── media metadata ───────────────────────────────────
@@ -73,6 +76,9 @@ _DDL = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE nex_moment_media ADD COLUMN IF NOT EXISTS uploader_user_id VARCHAR(30)",
+    "ALTER TABLE nex_moment_media ADD COLUMN IF NOT EXISTS media_type VARCHAR(20)",
+    "ALTER TABLE nex_moment_media ADD COLUMN IF NOT EXISTS storage_path TEXT",
 
     # ── audit ────────────────────────────────────────────
     """
@@ -98,6 +104,8 @@ _DDL = [
         UNIQUE (moment_id, viewer_user_id)
     )
     """,
+    "ALTER TABLE nex_moment_views ADD COLUMN IF NOT EXISTS viewer_user_id VARCHAR(30)",
+    "ALTER TABLE nex_moment_views ADD COLUMN IF NOT EXISTS viewed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
     "CREATE INDEX IF NOT EXISTS ix_nex_moment_views_m ON nex_moment_views(moment_id)",
 
     # ── reactions ────────────────────────────────────────
@@ -111,6 +119,11 @@ _DDL = [
         UNIQUE (moment_id, user_id)
     )
     """,
+    # 🚨 YEH LINE FIX HAI: Agar purane table mein 'reaction' column nahi hai, toh add karega
+    "ALTER TABLE nex_moment_reactions ADD COLUMN IF NOT EXISTS reaction VARCHAR(30)",
+    "ALTER TABLE nex_moment_reactions ADD COLUMN IF NOT EXISTS user_id VARCHAR(30)",
+    "ALTER TABLE nex_moment_reactions ADD COLUMN IF NOT EXISTS moment_id BIGINT",
+    "ALTER TABLE nex_moment_reactions ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
     "CREATE INDEX IF NOT EXISTS ix_nex_moment_reactions_m ON nex_moment_reactions(moment_id)",
 
     # ── comments ─────────────────────────────────────────
@@ -126,6 +139,9 @@ _DDL = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE nex_moment_comments ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE",
+    "ALTER TABLE nex_moment_comments ADD COLUMN IF NOT EXISTS parent_comment_id BIGINT",
+    "ALTER TABLE nex_moment_comments ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
     "CREATE INDEX IF NOT EXISTS ix_nex_moment_comments_m ON nex_moment_comments(moment_id, created_at DESC)",
 
     # ── reports ──────────────────────────────────────────
@@ -139,6 +155,8 @@ _DDL = [
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE nex_moment_reports ADD COLUMN IF NOT EXISTS reporter_user_id VARCHAR(30)",
+    "ALTER TABLE nex_moment_reports ADD COLUMN IF NOT EXISTS reason VARCHAR(100)",
 
     # ── settings ─────────────────────────────────────────
     """
@@ -152,6 +170,10 @@ _DDL = [
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
     """,
+    "ALTER TABLE nex_moment_settings ADD COLUMN IF NOT EXISTS comments_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE nex_moment_settings ADD COLUMN IF NOT EXISTS reactions_enabled BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE nex_moment_settings ADD COLUMN IF NOT EXISTS viewers_visible BOOLEAN NOT NULL DEFAULT TRUE",
+    "ALTER TABLE nex_moment_settings ADD COLUMN IF NOT EXISTS notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE",
 
     # ── notifications ────────────────────────────────────
     """
@@ -216,21 +238,17 @@ _FUNCTIONS = [
 _ensured = False
 _lock = Lock()
 
-
 def _tables_ok(conn) -> bool:
-    """Quick sanity check: does the primary table exist?"""
     try:
         insp = inspect(conn)
         return insp.has_table("nex_moments")
     except Exception:
         return False
 
-
 def run_moment_migrations(force: bool = False) -> None:
     """
     Idempotent. Safe to call from every request.
-    - First call executes DDL; subsequent calls are a no-op.
-    - Pass force=True to force re-run (e.g. from an admin endpoint).
+    First call executes DDL; subsequent calls are a no-op.
     """
     global _ensured
 
@@ -243,14 +261,12 @@ def run_moment_migrations(force: bool = False) -> None:
 
         errors = []
 
-        # Phase 1: create tables + indexes
+        # Phase 1: create tables + ALTER columns
         for i, stmt in enumerate(_DDL):
             try:
                 with engine.begin() as conn:
                     conn.execute(text(stmt))
             except Exception as exc:
-                # If the table already exists with the right shape, ignore.
-                # We only log actual failures.
                 logger.warning(
                     "[Usanex Moments] DDL step %d failed: %s", i, exc
                 )
