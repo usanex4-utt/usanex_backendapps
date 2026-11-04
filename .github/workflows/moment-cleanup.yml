@@ -20,30 +20,10 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Delete and verify test image
+      - name: Run Normal Moment cleanup dry run
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
         run: |
-          python - <<'PY'
-          from backend.services.supabase_storage import get_supabase_client
-
-          bucket = get_supabase_client().storage.from_("nex-moments")
-          path = "cleanup-test/IMG-20261104-WA2281.jpg"
-          folder, filename = path.rsplit("/", 1)
-
-          files = bucket.list(folder, {"search": filename, "limit": 100})
-
-          if not any(item.get("name") == filename for item in files):
-              raise RuntimeError("Test image not found. Nothing deleted.")
-
-          response = bucket.remove([path])
-          print("REMOVE RESPONSE:", response)
-
-          remaining = bucket.list(folder, {"search": filename, "limit": 100})
-
-          if any(item.get("name") == filename for item in remaining):
-              raise RuntimeError("Test image still exists after deletion.")
-
-          print("TEST DELETE VERIFIED:", path)
-          PY
+          python -c "from backend.services.moment_cleanup import cleanup_expired_normal_moments; print(cleanup_expired_normal_moments())"
