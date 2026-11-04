@@ -1,6 +1,8 @@
 # =========================================================
 # USANEX — FASTAPI APPLICATION ENTRY POINT
 # =========================================================
+import asyncio
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -119,14 +121,37 @@ async def lifespan(app: FastAPI):
     await redis_ws_manager.start()
     print("[Usanex] WebSocket Redis Manager started")
 
+    # ── SELF PING BACKGROUND TASK ──
+    async def self_ping():
+        # ⚠️ Apna live URL yahan daalein (Agar change ho toh)
+        url = "https://usanex-backendapps.onrender.com/health"
+        async with httpx.AsyncClient() as client:
+            while True:
+                try:
+                    await asyncio.sleep(600)  # 10 minute baad ping karega
+                    await client.get(url)
+                    print("[Usanex] Self-ping successful")
+                except asyncio.CancelledError:
+                    print("[Usanex] Self-ping task cancelled")
+                    break
+                except Exception as e:
+                    print(f"[Usanex] Self-ping failed: {e}")
+
+    # Start the background task
+    ping_task = asyncio.create_task(self_ping())
+
     try:
         yield
     finally:
-        # 7. STOP WEBSOCKET REDIS MANAGER
+        # 7. CANCEL SELF-PING TASK
+        print("[Usanex] Stopping Self-ping task...")
+        ping_task.cancel()
+
+        # 8. STOP WEBSOCKET REDIS MANAGER
         print("[Usanex] Stopping WebSocket Redis Manager...")
         await redis_ws_manager.stop()
 
-        # 8. CLOSE REDIS CONNECTION
+        # 9. CLOSE REDIS CONNECTION
         await close_redis()
         print("[Usanex] Redis Disconnected")
         print("[Usanex] Shutdown complete")

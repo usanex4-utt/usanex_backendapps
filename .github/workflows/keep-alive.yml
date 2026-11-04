@@ -1,0 +1,16 @@
+# .github/workflows/keep-alive.yml
+name: Keep Backend Awake
+
+on:
+  schedule:
+    # Har 10 minute mein chalega (Render 15 min mein sota hai)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # Taaki aap manually bhi chala sakein
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Health Endpoint
+        # ⚠️ Niche apna live backend URL daalein
+        run: curl -s https://usanex-backendapps.onrender.com/health > /dev/null
