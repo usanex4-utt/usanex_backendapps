@@ -101,6 +101,7 @@ def cleanup_expired_normal_moments(dry_run=True):
                     text("""
                         DELETE FROM nex_moment_media
                         WHERE id = :media_id
+                         AND moment_id = :moment_id
                     """),
                     {"media_id": media["media_id"]}
                 )
