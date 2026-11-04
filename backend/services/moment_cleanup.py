@@ -103,7 +103,10 @@ def cleanup_expired_normal_moments(dry_run=True):
                         WHERE id = :media_id
                          AND moment_id = :moment_id
                     """),
-                    {"media_id": media["media_id"]}
+                    {
+                      "media_id": media["media_id"],
+                      "moment_id": media["moment_id"]
+                    }
                 )
 
             deleted_records += 1
