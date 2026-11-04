@@ -37,13 +37,13 @@ def cleanup_expired_normal_moments(dry_run=True):
             JOIN nex_moment_media mm
               ON mm.moment_id = nm.id
             WHERE nm.moment_scope = 'normal'
-  AND nm.expires_at <= NOW()
-  AND (
-      (nm.id = 12 AND mm.id = 1)
-      OR
-      (nm.id = 15 AND mm.id = 4)
-  )
-ORDER BY nm.expires_at ASC
+             AND nm.expires_at <= NOW()
+             AND (
+              (nm.id = 12 AND mm.id = 1)
+              OR
+              (nm.id = 15 AND mm.id = 4)
+            )
+           ORDER BY nm.expires_at ASC
         """))
 
         media_rows = [dict(row._mapping) for row in result]
