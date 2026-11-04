@@ -701,17 +701,25 @@ async def read_notification(request: Request, db: Session = Depends(get_db)):
 # =========================================================
 # ⚠️  DYNAMIC ROUTES LAST — /{moment_id} catch-all
 # =========================================================
-
 @router.get("/{moment_id}")
 async def get_one(moment_id: int, request: Request, db: Session = Depends(get_db)):
     user = await get_authenticated_user(request, db)
     row = _get_moment_row(db, moment_id)
+
     if not row or row["deleted_at"]:
         raise HTTPException(404, "Moment not found")
+
+    if row["moment_scope"] == "normal" and row["archived_at"]:
+        if row["user_id"] != user.user_id:
+            raise HTTPException(404, "Moment not found")
+
     if not _can_view(db, moment_id, user.user_id, row["moment_scope"]):
         raise HTTPException(403, "Not allowed")
-    return {"success": True, "moment": _serialize_moment(db, row, user.user_id)}
 
+    return {
+        "success": True,
+        "moment": _serialize_moment(db, row, user.user_id)
+    }
 
 @router.put("/{moment_id}")
 async def update_moment(moment_id: int, payload: MomentUpdateBody,
