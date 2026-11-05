@@ -13,9 +13,21 @@ from .supabase_storage import (
 
 logger = logging.getLogger(__name__)
 
-
 def storage_file_exists(bucket, file_path):
-    if not file_path or "/" not in file_path:
+    if not file_path:
+        return False
+
+    # Local filesystem check
+    if file_path.startswith(LOCAL_URL_PREFIX + "/"):
+        relative_path = file_path[len(LOCAL_URL_PREFIX) + 1:]
+        local_path = LOCAL_UPLOAD_ROOT / relative_path
+        return local_path.is_file()
+
+    # Supabase Storage check
+    if bucket is None:
+        return False
+
+    if "/" not in file_path:
         return False
 
     folder, filename = file_path.rsplit("/", 1)
