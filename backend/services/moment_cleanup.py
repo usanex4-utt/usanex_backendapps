@@ -1,5 +1,6 @@
 
 import logging
+from pathlib import Path
 
 from sqlalchemy import text
 
@@ -9,25 +10,50 @@ from .supabase_storage import (
     _supabase_configured,
     LOCAL_UPLOAD_ROOT,
     LOCAL_URL_PREFIX,
+    BUCKET,
 )
 
 logger = logging.getLogger(__name__)
 
+
+def _get_local_path(file_path):
+    """Resolve a stored media path safely inside local upload folder."""
+    if not file_path:
+        return None
+
+    relative_path = file_path
+
+    if relative_path.startswith(LOCAL_URL_PREFIX + "/"):
+        relative_path = relative_path[len(LOCAL_URL_PREFIX) + 1:]
+
+    relative_path = relative_path.lstrip("/")
+
+    # Prevent directory traversal outside the upload folder.
+    root = LOCAL_UPLOAD_ROOT.resolve()
+    local_path = (root / relative_path).resolve()
+
+    try:
+        local_path.relative_to(root)
+    except ValueError:
+        raise ValueError("Invalid local media path")
+
+    return local_path
+
+
 def storage_file_exists(bucket, file_path):
+    """Check whether media exists in local or Supabase storage."""
     if not file_path:
         return False
 
-    # Local storage mode
-    if not _supabase_configured():
-        relative_path = file_path
+    local_path = _get_local_path(file_path)
 
-        if relative_path.startswith(LOCAL_URL_PREFIX + "/"):
-            relative_path = relative_path[len(LOCAL_URL_PREFIX) + 1:]
+    if local_path and local_path.is_file():
+        return True
 
-        local_path = LOCAL_UPLOAD_ROOT / relative_path
-        return local_path.is_file()
+    # Local URL paths are not Supabase object keys.
+    if file_path.startswith(LOCAL_URL_PREFIX + "/"):
+        return False
 
-    # Supabase Storage mode
     if bucket is None or "/" not in file_path:
         return False
 
@@ -43,27 +69,45 @@ def storage_file_exists(bucket, file_path):
         for item in files
     )
 
+
+def _delete_media_file(bucket, file_path):
+    """Delete a file from whichever storage contains it."""
+    if not file_path:
+        return 0
+
+    deleted = 0
+
+    local_path = _get_local_path(file_path)
+
+    # Delete local copy, if present.
+    if local_path and local_path.is_file():
+        local_path.unlink()
+        deleted += 1
+
+    # Delete Supabase copy, if present.
+    is_local_url = file_path.startswith(LOCAL_URL_PREFIX + "/")
+
+    if bucket is not None and not is_local_url:
+        if storage_file_exists(bucket, file_path):
+            bucket.remove([file_path])
+            deleted += 1
+
+    # Verify that no copy remains.
+    if storage_file_exists(bucket, file_path):
+        raise RuntimeError(
+            f"Media still exists after deletion: {file_path}"
+        )
+
+    return deleted
+
+
 def cleanup_expired_normal_moments(dry_run=True):
-    """Delete expired Normal Moment media while preserving history."""
+    """Archive expired Normal Moments and delete their media, preserving history."""
 
-   
-
-    # Step 1: Mark expired Moments as archived.
+    # Step 1: Archive expired Moments.
     archived_count = 0
 
-    if not dry_run:
-        with engine.begin() as conn:
-            result = conn.execute(text("""
-                UPDATE nex_moments
-                SET archived_at = COALESCE(archived_at, expires_at)
-                WHERE moment_scope = 'normal'
-                  AND expires_at <= NOW()
-                  AND deleted_at IS NULL
-                RETURNING id
-            """))
-
-            archived_count = len(result.fetchall())
-    else:
+    if dry_run:
         with engine.connect() as conn:
             result = conn.execute(text("""
                 SELECT COUNT(*)
@@ -75,7 +119,21 @@ def cleanup_expired_normal_moments(dry_run=True):
             """))
 
             archived_count = result.scalar() or 0
-    # Step 2: Find all expired Normal Moment media.
+
+    else:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                UPDATE nex_moments
+                SET archived_at = COALESCE(archived_at, expires_at)
+                WHERE moment_scope = 'normal'
+                  AND expires_at <= NOW()
+                  AND deleted_at IS NULL
+                RETURNING id
+            """))
+
+            archived_count = len(result.fetchall())
+
+    # Step 2: Find expired Moment media.
     with engine.connect() as conn:
         result = conn.execute(text("""
             SELECT
@@ -94,80 +152,69 @@ def cleanup_expired_normal_moments(dry_run=True):
 
         media_rows = [dict(row._mapping) for row in result]
 
+    # Step 3: Dry run — no database or storage changes.
     if dry_run:
         return {
             "dry_run": True,
             "archived": archived_count,
             "found": len(media_rows),
             "deleted_files": 0,
-            "failed": 0
+            "failed": 0,
         }
 
+    # Step 4: Connect to Supabase when configured.
     bucket = None
 
-if _supabase_configured():
-    bucket = get_supabase_client().storage.from_("nex-moments")
+    if _supabase_configured():
+        bucket = get_supabase_client().storage.from_(BUCKET)
 
     deleted_files = 0
     failed = 0
 
+    # Step 5: Delete expired media.
     for media in media_rows:
         paths = list(dict.fromkeys(
             path for path in (
                 media["storage_path"],
-                media["thumbnail_path"]
-            ) if path
+                media["thumbnail_path"],
+            )
+            if path
         ))
 
         if not paths:
             logger.warning(
                 "No storage paths: media_id=%s",
-                media["media_id"]
+                media["media_id"],
             )
             failed += 1
             continue
 
         try:
-            existing_paths = [
-                path for path in paths
-                if storage_file_exists(bucket, path)
-            ]
+            media_deleted = 0
 
-            if existing_paths:
-                response = bucket.remove(existing_paths)
+            for path in paths:
+                media_deleted += _delete_media_file(bucket, path)
 
-                if not isinstance(response, list):
-                    raise RuntimeError(
-                        "Invalid Storage deletion response"
-                    )
-
-                remaining = [
-                    path for path in paths
-                    if storage_file_exists(bucket, path)
-                ]
-
-                if remaining:
-                    raise RuntimeError(
-                        f"Storage verification failed: {remaining}"
-                    )
-
-                deleted_files += len(existing_paths)
+            deleted_files += media_deleted
 
             logger.info(
-                "CLEANUP SUCCESS: moment_id=%s media_id=%s",
+                "CLEANUP SUCCESS: moment_id=%s media_id=%s deleted_files=%s",
                 media["moment_id"],
-                media["media_id"]
+                media["media_id"],
+                media_deleted,
             )
 
             # IMPORTANT:
-            # Do not delete nex_moment_media records.
-            # Preserve all media metadata for future analysis.
+            # Keep nex_moment_media records.
+            # Keep all media metadata and engagement history.
 
         except Exception:
             failed += 1
+
             logger.exception(
-                "Cleanup failed: media_id=%s",
-                media["media_id"]
+                "Cleanup failed: moment_id=%s media_id=%s",
+                media["moment_id"],
+                media["media_id"],
             )
 
     return {
@@ -175,5 +222,5 @@ if _supabase_configured():
         "archived": archived_count,
         "found": len(media_rows),
         "deleted_files": deleted_files,
-        "failed": failed
+        "failed": failed,
     }
