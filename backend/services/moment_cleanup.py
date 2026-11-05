@@ -4,7 +4,12 @@ import logging
 from sqlalchemy import text
 
 from ..database.database import engine
-from .supabase_storage import get_supabase_client
+from .supabase_storage import (
+    get_supabase_client,
+    _supabase_configured,
+    LOCAL_UPLOAD_ROOT,
+    LOCAL_URL_PREFIX,
+)
 
 logger = logging.getLogger(__name__)
 
