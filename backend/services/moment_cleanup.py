@@ -29,19 +29,35 @@ def storage_file_exists(bucket, file_path):
 def cleanup_expired_normal_moments(dry_run=True):
     """Delete expired Normal Moment media while preserving history."""
 
+   
+
     # Step 1: Mark expired Moments as archived.
-    with engine.begin() as conn:
-        result = conn.execute(text("""
-            UPDATE nex_moments
-            SET archived_at = COALESCE(archived_at, expires_at)
-            WHERE moment_scope = 'normal'
-              AND expires_at <= NOW()
-              AND deleted_at IS NULL
-            RETURNING id
-        """))
+    archived_count = 0
 
-        archived_count = len(result.fetchall())
+    if not dry_run:
+        with engine.begin() as conn:
+            result = conn.execute(text("""
+                UPDATE nex_moments
+                SET archived_at = COALESCE(archived_at, expires_at)
+                WHERE moment_scope = 'normal'
+                  AND expires_at <= NOW()
+                  AND deleted_at IS NULL
+                RETURNING id
+            """))
 
+            archived_count = len(result.fetchall())
+    else:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT COUNT(*)
+                FROM nex_moments
+                WHERE moment_scope = 'normal'
+                  AND expires_at <= NOW()
+                  AND deleted_at IS NULL
+                  AND archived_at IS NULL
+            """))
+
+            archived_count = result.scalar() or 0
     # Step 2: Find all expired Normal Moment media.
     with engine.connect() as conn:
         result = conn.execute(text("""
