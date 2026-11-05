@@ -17,17 +17,18 @@ def storage_file_exists(bucket, file_path):
     if not file_path:
         return False
 
-    # Local filesystem check
-    if file_path.startswith(LOCAL_URL_PREFIX + "/"):
-        relative_path = file_path[len(LOCAL_URL_PREFIX) + 1:]
+    # Local storage mode
+    if not _supabase_configured():
+        relative_path = file_path
+
+        if relative_path.startswith(LOCAL_URL_PREFIX + "/"):
+            relative_path = relative_path[len(LOCAL_URL_PREFIX) + 1:]
+
         local_path = LOCAL_UPLOAD_ROOT / relative_path
         return local_path.is_file()
 
-    # Supabase Storage check
-    if bucket is None:
-        return False
-
-    if "/" not in file_path:
+    # Supabase Storage mode
+    if bucket is None or "/" not in file_path:
         return False
 
     folder, filename = file_path.rsplit("/", 1)
@@ -41,7 +42,6 @@ def storage_file_exists(bucket, file_path):
         isinstance(item, dict) and item.get("name") == filename
         for item in files
     )
-
 
 def cleanup_expired_normal_moments(dry_run=True):
     """Delete expired Normal Moment media while preserving history."""
@@ -103,6 +103,9 @@ def cleanup_expired_normal_moments(dry_run=True):
             "failed": 0
         }
 
+    bucket = None
+
+if _supabase_configured():
     bucket = get_supabase_client().storage.from_("nex-moments")
 
     deleted_files = 0
