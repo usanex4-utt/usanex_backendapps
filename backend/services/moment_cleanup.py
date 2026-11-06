@@ -246,5 +246,4 @@ def cleanup_expired_normal_moments(dry_run=True):
         "already_missing": already_missing,
         "deleted_files": deleted_files,
         "failed": failed,
-                }
-    
+     }
