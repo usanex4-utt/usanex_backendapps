@@ -19,6 +19,7 @@ from ..services.supabase_storage import (
 )
 from .auth import get_current_user_from_request
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -798,22 +799,92 @@ async def archive_moment(moment_id: int, request: Request,
     _audit(db, moment_id, user.user_id, "moment_archived")
     db.commit()
     return {"success": True, "moment_id": moment_id, "archived": True}
+def _moment_media_exists(db: Session, moment_id: int) -> bool:
+    media = db.execute(
+        text("""
+            SELECT storage_path, thumbnail_path
+            FROM nex_moment_media
+            WHERE moment_id = :moment_id
+        """),
+        {"moment_id": moment_id},
+    ).mappings().first()
 
+    # Text-only Moment ke liye media required nahi hai.
+    if not media:
+        return True
+
+    paths = [
+        path for path in (
+            media["storage_path"],
+            media["thumbnail_path"],
+        ) if path
+    ]
+
+    if not paths:
+        return False
+
+    from ..services.moment_cleanup import storage_file_exists
+
+    bucket = get_supabase_client().storage.from_("nex-moments")
+
+    return all(
+        storage_file_exists(bucket, path)
+        for path in paths
+    )
 
 @router.post("/{moment_id}/restore")
 async def restore_moment(moment_id: int, request: Request,
                          db: Session = Depends(get_db)):
     user = await get_authenticated_user(request, db)
+
     row = _get_moment_row(db, moment_id)
+
     if not row or row["deleted_at"]:
         raise HTTPException(404, "Not found")
+
     if row["user_id"] != user.user_id:
         raise HTTPException(403, "Not your moment")
-    db.execute(text("UPDATE nex_moments SET archived_at = NULL WHERE id = :id"),
-               {"id": moment_id})
+
+    # Check expiry using database time.
+    expired = db.execute(
+        text("""
+            SELECT expires_at IS NULL OR expires_at <= NOW()
+            FROM nex_moments
+            WHERE id = :id
+        """),
+        {"id": moment_id}
+    ).scalar()
+
+    if expired:
+        raise HTTPException(
+            400,
+            "Expired Moment cannot be restored"
+        )
+
+    # Check whether uploaded media still exists.
+    if not _moment_media_exists(db, moment_id):
+        raise HTTPException(
+            400,
+            "Moment media is missing and cannot be restored"
+        )
+
+    db.execute(
+        text("""
+            UPDATE nex_moments
+            SET archived_at = NULL
+            WHERE id = :id
+        """),
+        {"id": moment_id}
+    )
+
     _audit(db, moment_id, user.user_id, "moment_restored")
     db.commit()
-    return {"success": True, "moment_id": moment_id, "restored": True}
+
+    return {
+        "success": True,
+        "moment_id": moment_id,
+        "restored": True
+    }
 
 
 @router.post("/{moment_id}/view")
