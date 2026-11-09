@@ -635,3 +635,62 @@ async def get_people(
             "count": len(result),
         },
     }
+# backend/routes/users.py (Add these inside the file)
+
+@router.get("/{user_id}/followers")
+async def get_user_followers(
+    user_id: str,
+    request: Request,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    current_user = await get_current_user_from_request(request=request, db=db)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    target = db.query(User).filter(User.user_id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rows = (
+        db.query(User)
+        .join(UserFollow, UserFollow.follower_id == User.id)
+        .filter(UserFollow.following_id == target.id)
+        .order_by(UserFollow.created_at.desc())
+        .offset(offset).limit(limit).all()
+    )
+
+    return {
+        "success": True,
+        "users": [{"user_id": u.user_id, "name": u.name, "username": u.username, "profile_photo": u.profile_photo} for u in rows]
+    }
+
+@router.get("/{user_id}/following")
+async def get_user_following(
+    user_id: str,
+    request: Request,
+    limit: int = Query(100, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+):
+    current_user = await get_current_user_from_request(request=request, db=db)
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    target = db.query(User).filter(User.user_id == user_id).first()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    rows = (
+        db.query(User)
+        .join(UserFollow, UserFollow.following_id == User.id)
+        .filter(UserFollow.follower_id == target.id)
+        .order_by(UserFollow.created_at.desc())
+        .offset(offset).limit(limit).all()
+    )
+
+    return {
+        "success": True,
+        "users": [{"user_id": u.user_id, "name": u.name, "username": u.username, "profile_photo": u.profile_photo} for u in rows]
+    }
