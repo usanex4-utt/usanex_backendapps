@@ -1,11 +1,15 @@
 
 # =========================================================
 # USANEX — CENTRAL CONFIG
+# UPSTASH REDIS CONFIGURATION
 # =========================================================
 
 import os
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 
 # =========================================================
@@ -74,7 +78,10 @@ class Settings:
         )
 
         self.session_duration_days = int(
-            os.getenv("SESSION_DURATION_DAYS", "30")
+            os.getenv(
+                "SESSION_DURATION_DAYS",
+                "30"
+            )
         )
 
         # -------------------------------------------------
@@ -102,13 +109,32 @@ class Settings:
         )
 
         # -------------------------------------------------
-        # REDIS SETTINGS
+        # UPSTASH REDIS SETTINGS
         # -------------------------------------------------
 
         self.redis_url = os.getenv(
             "REDIS_URL",
-            "redis://localhost:6379/0"
-        )
+            ""
+        ).strip()
+
+        # Validate Redis URL format when configured
+        if self.redis_url:
+
+            if not self.redis_url.startswith(
+                ("rediss://", "redis://")
+            ):
+
+                raise ValueError(
+                    "Invalid REDIS_URL. "
+                    "Use rediss:// for Upstash Redis."
+                )
+
+            if self.redis_url.startswith("redis://"):
+
+                logger.warning(
+                    "REDIS_URL is using redis:// without TLS. "
+                    "For Upstash production, use rediss://."
+                )
 
     # =====================================================
     # CORS ORIGINS LIST
