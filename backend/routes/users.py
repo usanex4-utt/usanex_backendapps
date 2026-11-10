@@ -635,8 +635,6 @@ async def get_people(
             "count": len(result),
         },
     }
-# backend/routes/users.py (Add these inside the file)
-
 @router.get("/{user_id}/followers")
 async def get_user_followers(
     user_id: str,
@@ -661,10 +659,19 @@ async def get_user_followers(
         .offset(offset).limit(limit).all()
     )
 
-    return {
-        "success": True,
-        "users": [{"user_id": u.user_id, "name": u.name, "username": u.username, "profile_photo": u.profile_photo} for u in rows]
-    }
+    users = []
+    for u in rows:
+        following = is_following(db=db, follower_id=current_user.id, following_id=u.id)
+        users.append({
+            "user_id": u.user_id,
+            "name": u.name,
+            "username": u.username,
+            "profile_photo": u.profile_photo,
+            "is_following": following,  # True = already following → hide Follow back
+        })
+
+    return {"success": True, "users": users}
+
 
 @router.get("/{user_id}/following")
 async def get_user_following(
@@ -690,7 +697,15 @@ async def get_user_following(
         .offset(offset).limit(limit).all()
     )
 
-    return {
-        "success": True,
-        "users": [{"user_id": u.user_id, "name": u.name, "username": u.username, "profile_photo": u.profile_photo} for u in rows]
-    }
+    users = []
+    for u in rows:
+        following = is_following(db=db, follower_id=current_user.id, following_id=u.id)
+        users.append({
+            "user_id": u.user_id,
+            "name": u.name,
+            "username": u.username,
+            "profile_photo": u.profile_photo,
+            "is_following": following,
+        })
+
+    return {"success": True, "users": users}

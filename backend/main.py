@@ -174,9 +174,13 @@ app = FastAPI(
 # STATIC FILES (For Moments & Chat Uploads)
 # =========================================================
 _STATIC_DIR = Path(__file__).resolve().parent / "static"
-_STATIC_DIR.mkdir(parents=True, exist_ok=True)  
-app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
-print(f"[Usanex] Static media served from {_STATIC_DIR}")
+
+# Folder exist kare to hi mount karo, warna skip
+if _STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
+    print(f"[Usanex] Static media served from {_STATIC_DIR}")
+else:
+    print("[Usanex] Static folder not found — local media serving disabled")
 
 # =========================================================
 # MIDDLEWARE
