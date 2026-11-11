@@ -685,3 +685,40 @@ async def get_connections(request: Request, db: Session = Depends(get_db)):
         })
 
     return {"success": True, "users": users, "connections": users}
+
+@router.post("/request/cancel")
+async def cancel_connection_request(
+    body: ConnectionRequestBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Sender cancels their own pending outgoing request."""
+    current_user = await get_authenticated_user(request, db)
+    target_user = db.query(User).filter(User.user_id == body.user_id.strip()).first()
+    if target_user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    outgoing = get_latest_request(db, current_user.id, target_user.id)
+    if outgoing is None or outgoing.status != "pending":
+        return {
+            "success": True,
+            "status": "none",
+            "message": "No pending request to cancel",
+        }
+
+    outgoing.status = "cancelled"
+    outgoing.updated_at = datetime.utcnow()
+
+    # optional: mark related notification read / soft-hide
+    notif = get_latest_notification_for_request(db, outgoing.id)
+    if notif is not None and hasattr(notif, "is_read"):
+        notif.is_read = True
+
+    db.commit()
+
+    return {
+        "success": True,
+        "status": "none",
+        "message": "Connection request cancelled",
+        "request_id": outgoing.id,
+    }
