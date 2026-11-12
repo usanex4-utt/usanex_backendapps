@@ -119,6 +119,7 @@ def get_recommended_reels(
     user_id: int,
     limit: int = DEFAULT_LIMIT,
     exclude_reel_ids: Optional[list[int]] = None,
+    before_reel_id: Optional[int] = None,
 ) -> list[Reel]:
     """
     Initial scoring-based recommendation service.
@@ -138,6 +139,8 @@ def get_recommended_reels(
 
     if excluded_ids:
         query = query.filter(~Reel.id.in_(excluded_ids))
+    if before_reel_id:
+        query = query.filter(Reel.id < before_reel_id)
 
     candidates = (
         query.order_by(Reel.id.desc())
