@@ -454,6 +454,7 @@ async def get_reels_feed(
         user_id=current_user.id,
         limit=limit,
         exclude_reel_ids=[],
+        before_reel_id=cursor,
     )
     
     reels = [serialize_reel(reel, get_creator(db, reel.user_id)) for reel in reels_db]
