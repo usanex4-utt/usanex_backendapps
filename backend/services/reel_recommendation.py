@@ -151,20 +151,48 @@ def get_recommended_reels(
     exclude_reel_ids: Optional[list[int]] = None,
     offset: int = 0,
 ) -> list[Reel]:
+    """
+    Personalized reel recommendation with:
+    - Freshness and popularity
+    - Watch history and interactions
+    - Followed creator priority
+    - Not Interested exclusion
+    - Creator diversity
+    - Offset pagination
+    """
 
     limit = max(1, min(int(limit), MAX_LIMIT))
     offset = max(0, int(offset))
     excluded_ids = set(exclude_reel_ids or [])
 
+    # Base public and safe reels query
     query = db.query(Reel).filter(
         Reel.visibility == "public",
         Reel.status == "published",
         Reel.is_safe.is_(True),
     )
 
-    if excluded_ids:
-        query = query.filter(~Reel.id.in_(excluded_ids))
+    # Exclude reels marked as Not Interested
+    not_interested_ids = (
+        db.query(ReelInteraction.reel_id)
+        .filter(
+            ReelInteraction.user_id == user_id,
+            ReelInteraction.not_interested.is_(True),
+        )
+        .subquery()
+    )
 
+    query = query.filter(
+        ~Reel.id.in_(not_interested_ids)
+    )
+
+    # Exclude reels requested by pagination/client
+    if excluded_ids:
+        query = query.filter(
+            ~Reel.id.in_(excluded_ids)
+        )
+
+    # Fetch candidates
     candidates = (
         query.order_by(Reel.id.desc())
         .limit(MAX_CANDIDATES)
@@ -176,7 +204,7 @@ def get_recommended_reels(
 
     candidate_ids = [reel.id for reel in candidates]
 
-    # User's viewing history
+    # User viewing history
     history_rows = (
         db.query(UserReelHistory)
         .filter(
@@ -191,7 +219,7 @@ def get_recommended_reels(
         for row in history_rows
     }
 
-    # User's interactions
+    # User interactions
     interaction_rows = (
         db.query(ReelInteraction)
         .filter(
@@ -227,6 +255,7 @@ def get_recommended_reels(
         row[0] for row in followed_rows
     }
 
+    # Calculate personalized scores
     scored = []
 
     for reel in candidates:
@@ -245,22 +274,26 @@ def get_recommended_reels(
             )
         )
 
-        # Followed creators receive a preference boost.
+        # Followed creator preference
         if reel.user_id in followed_creator_ids:
             score += 10.0
 
-        # Avoid repeatedly recommending already watched reels.
+        # Reduce already watched reels
         if seen:
             score *= 0.25
 
         scored.append((round(score, 4), reel))
 
-    # Deterministic tie-breaking.
+    # Sort by score and reel ID
     scored.sort(
         key=lambda item: (item[0], item[1].id),
         reverse=True,
     )
 
+    # Creator diversity
     ranked = _rank_with_creator_diversity(scored)
 
+    # Pagination
     return ranked[offset:offset + limit]
+    
+ 
