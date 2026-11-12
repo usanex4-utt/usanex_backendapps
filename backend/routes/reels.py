@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from ..services.reel_recommendation import get_recommended_reels
 import json
 import os
 import uuid
