@@ -434,7 +434,10 @@ async def get_reels_feed(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    cache_key = f"usanex:reels:feed:{limit}:{cursor or 0}"
+    cache_key = (
+    f"usanex:reels:feed:"
+    f"{current_user.id}:{limit}:{cursor or 0}"
+    )
 
     try:
         cached = await get_redis().get(cache_key)
