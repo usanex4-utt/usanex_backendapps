@@ -430,27 +430,31 @@ def service_status():
 @router.get("/feed")
 async def get_reels_feed(
     limit: int = Query(DEFAULT_FEED_LIMIT, ge=1, le=MAX_FEED_LIMIT),
-    cursor: Optional[int] = Query(default=None, ge=1),
+    cursor: Optional[int] = Query(default=None, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    offset = cursor or 0
+
     cache_key = (
-    f"usanex:reels:feed:"
-    f"{current_user.id}:{limit}:{cursor or 0}"
+        f"usanex:reels:feed:"
+        f"{current_user.id}:{limit}:{offset}"
     )
 
+    # Redis cache
     try:
         cached = await get_redis().get(cache_key)
+
         if cached:
             if isinstance(cached, bytes):
                 cached = cached.decode("utf-8")
+
             return json.loads(cached)
+
     except Exception:
         pass
 
-    
-    offset = cursor or 0
-
+    # Recommended reels
     reels_db = get_recommended_reels(
         db=db,
         user_id=current_user.id,
@@ -458,17 +462,40 @@ async def get_reels_feed(
         exclude_reel_ids=[],
         offset=offset,
     )
-    
-    reels = [serialize_reel(reel, get_creator(db, reel.user_id)) for reel in reels_db]
-    next_cursor = offset + len(reels_db) if len(reels_db) == limit else None
-    response = {"success": True, "reels": reels, "count": len(reels), "next_cursor": next_cursor}
 
+    # Serialize reels
+    reels = [
+        serialize_reel(reel, get_creator(db, reel.user_id))
+        for reel in reels_db
+    ]
+
+    # Next page cursor (offset pagination)
+    next_cursor = (
+        offset + len(reels_db)
+        if len(reels_db) == limit
+        else None
+    )
+
+    response = {
+        "success": True,
+        "reels": reels,
+        "count": len(reels),
+        "next_cursor": next_cursor,
+    }
+
+    # Save Redis cache
     try:
-        await get_redis().set(cache_key, json.dumps(response, default=str), ex=FEED_CACHE_TTL)
+        await get_redis().set(
+            cache_key,
+            json.dumps(response, default=str),
+            ex=FEED_CACHE_TTL,
+        )
     except Exception:
         pass
 
     return response
+    
+
 
 
 # =========================================================
