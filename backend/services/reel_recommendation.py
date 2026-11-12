@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import math
@@ -7,7 +6,12 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from ..database.models import Reel, UserReelHistory
+from ..database.models import (
+    Reel,
+    UserReelHistory,
+    ReelInteraction,
+    UserFollow,
+)
 
 
 DEFAULT_LIMIT = 10
@@ -23,7 +27,6 @@ def _safe_number(value) -> float:
 
 
 def _freshness_score(created_at: Optional[datetime]) -> float:
-    """Newer reels receive a higher freshness score."""
     if not created_at:
         return 0.0
 
@@ -35,7 +38,6 @@ def _freshness_score(created_at: Optional[datetime]) -> float:
         (datetime.now(timezone.utc) - created_at).total_seconds() / 3600,
     )
 
-    # Score decreases gradually over time.
     return 20.0 * math.exp(-age_hours / 168)
 
 
@@ -50,8 +52,6 @@ def _popularity_score(reel: Reel) -> float:
     interested = _safe_number(reel.interested_count)
     not_interested = _safe_number(reel.not_interested_count)
 
-    # Logarithmic scoring prevents very popular reels
-    # from dominating every recommendation.
     reach_score = min(15.0, math.log1p(views) * 2.0)
 
     engagement = (
@@ -74,21 +74,52 @@ def _popularity_score(reel: Reel) -> float:
     return min(45.0, reach_score + engagement_score + completion_score)
 
 
-def _reel_score(reel: Reel, seen: bool = False) -> float:
-    score = (
-        _freshness_score(reel.created_at)
-        + _popularity_score(reel)
-    )
+def _personal_score(
+    reel_id: int,
+    history,
+    interactions,
+) -> float:
+    score = 0.0
 
-    # Avoid repeatedly recommending already watched reels.
-    if seen:
-        score *= 0.25
+    if history:
+        watch_time = _safe_number(history.total_watch_time)
+        watch_percentage = _safe_number(history.max_watch_percentage)
+        completed_count = _safe_number(history.completed_count)
+        replay_count = _safe_number(history.replay_count)
 
-    return round(score, 4)
+        score += min(8.0, math.log1p(watch_time) * 1.5)
+        score += min(8.0, watch_percentage / 100.0 * 8.0)
+        score += min(6.0, completed_count * 2.0)
+        score += min(6.0, replay_count * 2.0)
+
+    for interaction in interactions:
+        event_type = interaction.event_type
+
+        if event_type == "interested" or interaction.interested:
+            score += 8.0
+
+        elif event_type == "not_interested" or interaction.not_interested:
+            score -= 15.0
+
+        if interaction.saved:
+            score += 6.0
+
+        if interaction.shared:
+            score += 5.0
+
+        if interaction.commented:
+            score += 3.0
+
+        if interaction.star_rating:
+            score += min(5.0, _safe_number(interaction.star_rating))
+
+        if interaction.muted:
+            score -= 2.0
+
+    return max(-25.0, min(40.0, score))
 
 
 def _rank_with_creator_diversity(scored_reels):
-    """Avoid showing too many consecutive reels from one creator."""
     remaining = list(scored_reels)
     ranked = []
     recent_creators = []
@@ -108,7 +139,6 @@ def _rank_with_creator_diversity(scored_reels):
 
         selected = remaining.pop(selected_index)
         ranked.append(selected[1])
-
         recent_creators.append(selected[1].user_id)
 
     return ranked
@@ -121,9 +151,6 @@ def get_recommended_reels(
     exclude_reel_ids: Optional[list[int]] = None,
     offset: int = 0,
 ) -> list[Reel]:
-    """
-    Scoring-based recommendation with offset pagination.
-    """
 
     limit = max(1, min(int(limit), MAX_LIMIT))
     offset = max(0, int(offset))
@@ -149,8 +176,9 @@ def get_recommended_reels(
 
     candidate_ids = [reel.id for reel in candidates]
 
+    # User's viewing history
     history_rows = (
-        db.query(UserReelHistory.reel_id)
+        db.query(UserReelHistory)
         .filter(
             UserReelHistory.user_id == user_id,
             UserReelHistory.reel_id.in_(candidate_ids),
@@ -158,17 +186,81 @@ def get_recommended_reels(
         .all()
     )
 
-    seen_ids = {row[0] for row in history_rows}
+    history_map = {
+        row.reel_id: row
+        for row in history_rows
+    }
+
+    # User's interactions
+    interaction_rows = (
+        db.query(ReelInteraction)
+        .filter(
+            ReelInteraction.user_id == user_id,
+            ReelInteraction.reel_id.in_(candidate_ids),
+        )
+        .order_by(ReelInteraction.created_at.desc())
+        .all()
+    )
+
+    interaction_map = {}
+
+    for interaction in interaction_rows:
+        interaction_map.setdefault(
+            interaction.reel_id, []
+        ).append(interaction)
+
+    # Followed creators
+    creator_ids = list({
+        reel.user_id for reel in candidates
+    })
+
+    followed_rows = (
+        db.query(UserFollow.following_id)
+        .filter(
+            UserFollow.follower_id == user_id,
+            UserFollow.following_id.in_(creator_ids),
+        )
+        .all()
+    )
+
+    followed_creator_ids = {
+        row[0] for row in followed_rows
+    }
 
     scored = []
 
     for reel in candidates:
-        is_seen = reel.id in seen_ids
-        scored.append((_reel_score(reel, seen=is_seen), reel))
+        history = history_map.get(reel.id)
+        interactions = interaction_map.get(reel.id, [])
 
-    scored.sort(key=lambda item: item[0], reverse=True)
+        seen = history is not None
+
+        score = (
+            _freshness_score(reel.created_at)
+            + _popularity_score(reel)
+            + _personal_score(
+                reel.id,
+                history,
+                interactions,
+            )
+        )
+
+        # Followed creators receive a preference boost.
+        if reel.user_id in followed_creator_ids:
+            score += 10.0
+
+        # Avoid repeatedly recommending already watched reels.
+        if seen:
+            score *= 0.25
+
+        scored.append((round(score, 4), reel))
+
+    # Deterministic tie-breaking.
+    scored.sort(
+        key=lambda item: (item[0], item[1].id),
+        reverse=True,
+    )
 
     ranked = _rank_with_creator_diversity(scored)
 
     return ranked[offset:offset + limit]
-    
