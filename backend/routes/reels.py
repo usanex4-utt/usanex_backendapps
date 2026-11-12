@@ -448,15 +448,14 @@ async def get_reels_feed(
     except Exception:
         pass
 
-    query = db.query(Reel).filter(
-        Reel.visibility == "public",
-        Reel.status == "published",
-        Reel.is_safe.is_(True),
-    )
-    if cursor:
-        query = query.filter(Reel.id < cursor)
-
-    reels_db = query.order_by(Reel.id.desc()).limit(limit).all()
+    
+reels_db = get_recommended_reels(
+    db=db,
+    user_id=current_user.id,
+    limit=limit,
+    exclude_reel_ids=[],
+)
+    
     reels = [serialize_reel(reel, get_creator(db, reel.user_id)) for reel in reels_db]
     next_cursor = reels_db[-1].id if reels_db else None
     response = {"success": True, "reels": reels, "count": len(reels), "next_cursor": next_cursor}
