@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import math
@@ -93,8 +94,6 @@ def _personal_score(
         score += min(6.0, replay_count * 2.0)
 
     for interaction in interactions:
-        event_type = interaction.event_type
-
         if interaction.interested:
             score += 8.0
 
@@ -117,6 +116,38 @@ def _personal_score(
             score -= 2.0
 
     return max(-25.0, min(40.0, score))
+
+
+def _reel_score(
+    reel: Reel,
+    seen: bool = False,
+    history=None,
+    interactions=None,
+) -> float:
+    """
+    Calculate overall reel recommendation score.
+    """
+
+    score = 0.0
+
+    # Freshness
+    score += _freshness_score(reel.created_at)
+
+    # Popularity
+    score += _popularity_score(reel)
+
+    # Personal watch and interaction history
+    score += _personal_score(
+        reel.id,
+        history,
+        interactions or [],
+    )
+
+    # Already watched reels get lower priority
+    if seen:
+        score -= 15.0
+
+    return score
 
 
 def _rank_with_creator_diversity(scored_reels):
@@ -163,6 +194,7 @@ def get_recommended_reels(
 
     limit = max(1, min(int(limit), MAX_LIMIT))
     offset = max(0, int(offset))
+
     excluded_ids = set(exclude_reel_ids or [])
 
     # Base public and safe reels
@@ -199,11 +231,11 @@ def get_recommended_reels(
     if not candidates:
         return []
 
-    candidate_ids = [r.id for r in candidates]
+    candidate_ids = [reel.id for reel in candidates]
 
     # Watch history
     history_rows = (
-        db.query(UserReelHistory.reel_id)
+        db.query(UserReelHistory)
         .filter(
             UserReelHistory.user_id == user_id,
             UserReelHistory.reel_id.in_(candidate_ids),
@@ -211,7 +243,12 @@ def get_recommended_reels(
         .all()
     )
 
-    seen_ids = {row[0] for row in history_rows}
+    history_map = {
+        item.reel_id: item
+        for item in history_rows
+    }
+
+    seen_ids = set(history_map.keys())
 
     # User interactions
     interactions = (
@@ -230,7 +267,7 @@ def get_recommended_reels(
         interaction_map.setdefault(item.reel_id, []).append(item)
 
     # Followed creators
-    creator_ids = list({r.user_id for r in candidates})
+    creator_ids = list({reel.user_id for reel in candidates})
 
     followed_rows = (
         db.query(UserFollow.following_id)
@@ -248,29 +285,31 @@ def get_recommended_reels(
 
     for reel in candidates:
         seen = reel.id in seen_ids
-        score = _reel_score(reel, seen=seen)
 
+        reel_history = history_map.get(reel.id)
+        reel_interactions = interaction_map.get(reel.id, [])
+
+        score = _reel_score(
+            reel,
+            seen=seen,
+            history=reel_history,
+            interactions=reel_interactions,
+        )
+
+        # Followed creator priority
         if reel.user_id in followed_ids:
             score += 10.0
 
-        for interaction in interaction_map.get(reel.id, []):
-            if interaction.interested:
-                score += 8.0
-            if interaction.saved:
-                score += 6.0
-            if interaction.shared:
-                score += 5.0
-            if interaction.commented:
-                score += 3.0
-
         scored.append((score, reel))
 
+    # Highest score first
     scored.sort(
         key=lambda item: (item[0], item[1].id),
         reverse=True,
     )
 
+    # Creator diversity
     ranked = _rank_with_creator_diversity(scored)
 
+    # Offset pagination
     return ranked[offset:offset + limit]
-    
