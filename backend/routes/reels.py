@@ -449,16 +449,18 @@ async def get_reels_feed(
         pass
 
     
+    offset = cursor or 0
+
     reels_db = get_recommended_reels(
         db=db,
         user_id=current_user.id,
         limit=limit,
         exclude_reel_ids=[],
-        before_reel_id=cursor,
+        offset=offset,
     )
     
     reels = [serialize_reel(reel, get_creator(db, reel.user_id)) for reel in reels_db]
-    next_cursor = reels_db[-1].id if reels_db else None
+    next_cursor = offset + len(reels_db) if len(reels_db) == limit else None
     response = {"success": True, "reels": reels, "count": len(reels), "next_cursor": next_cursor}
 
     try:
