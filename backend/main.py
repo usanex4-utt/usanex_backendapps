@@ -5,7 +5,7 @@ import asyncio
 import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
-
+from .routes import admin_dashboard 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -52,6 +52,7 @@ from .routes import (
     users,
     admin_moments,
     moment,
+    admin_auth, 
 )
 
 
@@ -191,10 +192,12 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:3000",
+        "http://localhost:5174",
         "http://127.0.0.1:3000",
         "http://localhost:8081",
         "http://127.0.0.1:8081",
         "https://uxanexapps.vercel.app",
+        "https://usanex-dashboard.vercel.app",
         "https://usanex-backendapps.onrender.com",
     ],
     allow_credentials=True,
@@ -217,6 +220,8 @@ app.include_router(search.router)
 app.include_router(users.router)
 app.include_router(admin_moments.router)
 app.include_router(moment.router)
+app.include_router(admin_auth.router)
+app.include_router(admin_dashboard.router) 
 
 # =========================================================
 # ROOT & HEALTH ENDPOINTS
