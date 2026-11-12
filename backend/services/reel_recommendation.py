@@ -119,16 +119,14 @@ def get_recommended_reels(
     user_id: int,
     limit: int = DEFAULT_LIMIT,
     exclude_reel_ids: Optional[list[int]] = None,
-    before_reel_id: Optional[int] = None,
+    offset: int = 0,
 ) -> list[Reel]:
     """
-    Initial scoring-based recommendation service.
-
-    Uses existing Reel counters and UserReelHistory.
-    Does not create or modify database records.
+    Scoring-based recommendation with offset pagination.
     """
 
     limit = max(1, min(int(limit), MAX_LIMIT))
+    offset = max(0, int(offset))
     excluded_ids = set(exclude_reel_ids or [])
 
     query = db.query(Reel).filter(
@@ -139,8 +137,6 @@ def get_recommended_reels(
 
     if excluded_ids:
         query = query.filter(~Reel.id.in_(excluded_ids))
-    if before_reel_id:
-        query = query.filter(Reel.id < before_reel_id)
 
     candidates = (
         query.order_by(Reel.id.desc())
@@ -164,26 +160,15 @@ def get_recommended_reels(
 
     seen_ids = {row[0] for row in history_rows}
 
-    unseen = []
-    previously_seen = []
+    scored = []
 
     for reel in candidates:
         is_seen = reel.id in seen_ids
-        item = (_reel_score(reel, seen=is_seen), reel)
+        scored.append((_reel_score(reel, seen=is_seen), reel))
 
-        if is_seen:
-            previously_seen.append(item)
-        else:
-            unseen.append(item)
+    scored.sort(key=lambda item: item[0], reverse=True)
 
-    # Prefer unseen reels. Use previously seen reels only
-    # when there are not enough unseen candidates.
-    unseen.sort(key=lambda item: item[0], reverse=True)
-    previously_seen.sort(key=lambda item: item[0], reverse=True)
+    ranked = _rank_with_creator_diversity(scored)
 
-    combined = unseen + previously_seen
-
-    selected = _rank_with_creator_diversity(combined)
-
-    return selected[:limit]
-  
+    return ranked[offset:offset + limit]
+    
