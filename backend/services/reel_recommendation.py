@@ -95,10 +95,10 @@ def _personal_score(
     for interaction in interactions:
         event_type = interaction.event_type
 
-        if event_type == "interested" or interaction.interested:
+        if interaction.interested:
             score += 8.0
 
-        elif event_type == "not_interested" or interaction.not_interested:
+        elif interaction.not_interested:
             score -= 15.0
 
         if interaction.saved:
