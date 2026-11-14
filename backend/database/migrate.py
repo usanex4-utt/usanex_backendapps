@@ -50,4 +50,31 @@ def run_migrations():
             with engine.begin() as connection:
                 connection.execute(text(sql))
 
+                    # Ensure existing Reel likes_count values are safe
+    inspector = inspect(engine)
+
+    if inspector.has_table("reels"):
+        reel_columns = {
+            column["name"]
+            for column in inspector.get_columns("reels")
+        }
+
+        if "likes_count" in reel_columns:
+            with engine.begin() as connection:
+                connection.execute(text("""
+                    UPDATE reels
+                    SET likes_count = 0
+                    WHERE likes_count IS NULL
+                """))
+
+                connection.execute(text("""
+                    ALTER TABLE reels
+                    ALTER COLUMN likes_count SET DEFAULT 0
+                """))
+
+                connection.execute(text("""
+                    ALTER TABLE reels
+                    ALTER COLUMN likes_count SET NOT NULL
+                """))
+
     print("[Usanex Migration] Completed successfully.")
