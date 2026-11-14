@@ -38,7 +38,6 @@ from ..database.models import (
     ReelSave,
     ReelDownload,
     ReelShare,
-    ReelRating,
     ReelLike,
     ReelInteraction,
     UserReelHistory,
