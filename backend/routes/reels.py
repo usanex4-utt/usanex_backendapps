@@ -256,6 +256,7 @@ def serialize_reel(reel: Reel, creator: Optional[User] = None) -> dict[str, Any]
         "save_count": int(reel.save_count or 0),
         "download_count": int(reel.download_count or 0),
         "comment_count": int(reel.comment_count or 0),
+        "likes_count": int(reel.likes_count or 0),
         "one_star_count": int(reel.one_star_count or 0),
         "two_star_count": int(reel.two_star_count or 0),
         "three_star_count": int(reel.three_star_count or 0),
