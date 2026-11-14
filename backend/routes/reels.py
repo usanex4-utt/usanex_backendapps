@@ -791,8 +791,17 @@ def unlike_reel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    reel = get_reel_or_404(db, reel_id)
-    ensure_reel_access(reel, current_user)
+    reel = (
+    db.query(Reel)
+    .filter(Reel.id == reel_id)
+    .with_for_update()
+    .first()
+)
+
+if reel is None:
+    raise HTTPException(status_code=404, detail="Reel not found")
+
+ensure_reel_access(reel, current_user)
 
     existing = db.query(ReelLike).filter(
         ReelLike.user_id == current_user.id,
@@ -825,8 +834,17 @@ def reel_like_status(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    reel = get_reel_or_404(db, reel_id)
-    ensure_reel_access(reel, current_user)
+    reel = (
+    db.query(Reel)
+    .filter(Reel.id == reel_id)
+    .with_for_update()
+    .first()
+)
+
+if reel is None:
+    raise HTTPException(status_code=404, detail="Reel not found")
+
+ensure_reel_access(reel, current_user)
 
     liked = db.query(ReelLike.id).filter(
         ReelLike.user_id == current_user.id,
