@@ -34,23 +34,7 @@ def run_migrations():
             column_type = column.type.compile(
                 dialect=engine.dialect
             )
-
-            # Existing rows may already be present.
-            # Therefore add missing columns as nullable first.
-            sql = f"""
-                ALTER TABLE "{table_name}"
-                ADD COLUMN "{column.name}" {column_type}
-            """
-
-            print(
-                f"[Usanex Migration] Adding "
-                f"{table_name}.{column.name}"
-            )
-
-            with engine.begin() as connection:
-                connection.execute(text(sql))
-
-                    # Ensure existing Reel likes_count values are safe
+        # Ensure existing Reel likes_count values are safe
     inspector = inspect(engine)
 
     if inspector.has_table("reels"):
