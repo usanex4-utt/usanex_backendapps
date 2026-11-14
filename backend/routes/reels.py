@@ -288,10 +288,6 @@ class WatchEventRequest(BaseModel):
     source: Optional[str] = Field(default=None, max_length=50)
 
 
-class RatingRequest(BaseModel):
-    rating: int = Field(ge=1, le=3)
-
-
 class ShareRequest(BaseModel):
     share_type: Optional[str] = Field(default=None, max_length=50)
 
