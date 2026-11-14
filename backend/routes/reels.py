@@ -801,16 +801,16 @@ def unlike_reel(
     current_user: User = Depends(get_current_user),
 ):
     reel = (
-    db.query(Reel)
-    .filter(Reel.id == reel_id)
-    .with_for_update()
-    .first()
-)
+        db.query(Reel)
+        .filter(Reel.id == reel_id)
+        .with_for_update()
+        .first()
+    )
 
-if reel is None:
-    raise HTTPException(status_code=404, detail="Reel not found")
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
 
-ensure_reel_access(reel, current_user)
+    ensure_reel_access(reel, current_user)
 
     existing = db.query(ReelLike).filter(
         ReelLike.user_id == current_user.id,
