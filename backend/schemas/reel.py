@@ -36,9 +36,6 @@ class ReelResponse(BaseSchema):
     save_count: int
     download_count: int
     comment_count: int
-    one_star_count: int
-    two_star_count: int
-    three_star_count: int
     interested_count: int
     not_interested_count: int
     ai_processed: bool
@@ -76,7 +73,6 @@ class ReelInteractionEvent(BaseSchema):
     completed: bool = False
     replayed: bool = False
     replay_count: int = 0
-    star_rating: int = 0
     interested: bool = False
     not_interested: bool = False
     saved: bool = False
@@ -84,10 +80,6 @@ class ReelInteractionEvent(BaseSchema):
     shared: bool = False
     commented: bool = False
     muted: bool = False
-
-
-class ReelRatingRequest(BaseSchema):
-    rating: int = Field(..., ge=1, le=3)
 
 
 class ReelReportRequest(BaseSchema):
