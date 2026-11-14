@@ -798,6 +798,12 @@ class Reel(Base):
         default=0,
         nullable=False,
     )
+ 
+    likes_count = Column(
+        BigInteger,
+        default=0,
+        nullable=False,
+    )
 
     # -----------------------------
     # STAR SYSTEM
@@ -1200,6 +1206,30 @@ class ReelInteraction(Base):
             "event_type",
             "created_at",
         ),
+    )
+
+
+
+# =========================================================
+# REEL LIKE
+# =========================================================
+
+class ReelLike(Base):
+    __tablename__ = "reel_likes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    reel_id = Column(Integer, nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "reel_id",
+            name="uq_reel_like_user_reel",
+        ),
+        Index("ix_reel_likes_reel_created", "reel_id", "created_at"),
+        Index("ix_reel_likes_user_created", "user_id", "created_at"),
     )
 
 
