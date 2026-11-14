@@ -109,9 +109,6 @@ def _personal_score(
         if interaction.commented:
             score += 3.0
 
-        if interaction.star_rating:
-            score += min(5.0, _safe_number(interaction.star_rating))
-
         if interaction.muted:
             score -= 2.0
 
