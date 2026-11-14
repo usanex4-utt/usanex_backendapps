@@ -1163,7 +1163,10 @@ def reel_status(reel_id: int, db: Session = Depends(get_db), current_user: User 
     ensure_reel_access(reel, current_user)
 
     saved = db.query(ReelSave).filter(ReelSave.user_id == current_user.id, ReelSave.reel_id == reel_id).first() is not None
-    rating_row = db.query(ReelRating).filter(ReelRating.user_id == current_user.id, ReelRating.reel_id == reel_id).first()
+    liked = db.query(ReelLike.id).filter(
+    ReelLike.user_id == current_user.id,
+    ReelLike.reel_id == reel_id,
+).first() is not None
     interested = db.query(ReelInteraction).filter(ReelInteraction.user_id == current_user.id, ReelInteraction.reel_id == reel_id, ReelInteraction.interested.is_(True)).first() is not None
     not_interested = db.query(ReelInteraction).filter(ReelInteraction.user_id == current_user.id, ReelInteraction.reel_id == reel_id, ReelInteraction.not_interested.is_(True)).first() is not None
 
@@ -1171,7 +1174,8 @@ def reel_status(reel_id: int, db: Session = Depends(get_db), current_user: User 
         "success": True,
         "reel_id": reel_id,
         "saved": saved,
-        "rating": rating_row.rating if rating_row else None,
+        "liked": liked,
+        "likes_count": int(reel.likes_count or 0),
         "interested": interested,
         "not_interested": not_interested,
     }
