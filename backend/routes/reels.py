@@ -739,13 +739,23 @@ def watch_reel(reel_id: int, payload: WatchEventRequest, db: Session = Depends(g
 # REEL LIKE / UNLIKE
 # =========================================================
 
+
 @router.post("/{reel_id}/like")
 def like_reel(
     reel_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    reel = get_reel_or_404(db, reel_id)
+    reel = (
+        db.query(Reel)
+        .filter(Reel.id == reel_id)
+        .with_for_update()
+        .first()
+    )
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
     ensure_reel_access(reel, current_user)
 
     existing = db.query(ReelLike).filter(
@@ -783,7 +793,6 @@ def like_reel(
         "likes_count": reel.likes_count,
         "interaction_id": interaction.id,
     }
-
 
 @router.delete("/{reel_id}/like")
 def unlike_reel(
