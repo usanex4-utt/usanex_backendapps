@@ -657,7 +657,6 @@ async def upload_reel(
             status="published",
             views_count=0, unique_views_count=0, completed_views_count=0, replay_count=0,
             share_count=0, save_count=0, download_count=0, comment_count=0,
-            one_star_count=0, two_star_count=0, three_star_count=0,
             interested_count=0, not_interested_count=0,
             ai_processed=False, ai_processing_status="pending", is_safe=True,
             created_at=now, updated_at=now,
