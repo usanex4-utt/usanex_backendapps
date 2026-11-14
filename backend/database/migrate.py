@@ -9,15 +9,14 @@ def run_migrations():
     """
     Add missing columns to existing database tables.
 
-    Existing tables/data are NOT deleted.
+    Existing tables and data are NOT deleted.
     """
 
     inspector = inspect(engine)
 
     for table_name, table in models.Base.metadata.tables.items():
 
-        # Table doesn't exist yet.
-        # server.py create_all() will create it.
+        # Tables not yet present are created by Base.metadata.create_all()
         if not inspector.has_table(table_name):
             continue
 
@@ -34,17 +33,35 @@ def run_migrations():
             column_type = column.type.compile(
                 dialect=engine.dialect
             )
-        # Ensure existing Reel likes_count values are safe
+
+            # Add missing columns without deleting existing data.
+            sql = f"""
+                ALTER TABLE "{table_name}"
+                ADD COLUMN "{column.name}" {column_type}
+            """
+
+            print(
+                f"[Usanex Migration] Adding "
+                f"{table_name}.{column.name}"
+            )
+
+            with engine.begin() as connection:
+                connection.execute(text(sql))
+
+    # Safely initialize Reel likes_count for existing records.
     inspector = inspect(engine)
 
     if inspector.has_table("reels"):
+
         reel_columns = {
             column["name"]
             for column in inspector.get_columns("reels")
         }
 
         if "likes_count" in reel_columns:
+
             with engine.begin() as connection:
+
                 connection.execute(text("""
                     UPDATE reels
                     SET likes_count = 0
