@@ -741,58 +741,6 @@ def watch_reel(reel_id: int, payload: WatchEventRequest, db: Session = Depends(g
 
 
 # =========================================================
-# RATING
-# =========================================================
-
-@router.post("/{reel_id}/rating")
-def rate_reel(reel_id: int, payload: RatingRequest, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    reel = get_reel_or_404(db, reel_id)
-    ensure_reel_access(reel, current_user)
-
-    existing = db.query(ReelRating).filter(ReelRating.user_id == current_user.id, ReelRating.reel_id == reel_id).first()
-
-    if existing and existing.rating == payload.rating:
-        return {"success": True, "rating": existing.rating, "one_star_count": reel.one_star_count or 0, "two_star_count": reel.two_star_count or 0, "three_star_count": reel.three_star_count or 0, "unchanged": True}
-
-    if existing:
-        old_rating = existing.rating
-        if old_rating == 1: reel.one_star_count = max(0, (reel.one_star_count or 0) - 1)
-        elif old_rating == 2: reel.two_star_count = max(0, (reel.two_star_count or 0) - 1)
-        elif old_rating == 3: reel.three_star_count = max(0, (reel.three_star_count or 0) - 1)
-        existing.rating = payload.rating
-        existing.updated_at = utc_now()
-    else:
-        existing = ReelRating(user_id=current_user.id, reel_id=reel_id, rating=payload.rating, created_at=utc_now(), updated_at=utc_now())
-        db.add(existing)
-
-    if payload.rating == 1: reel.one_star_count = (reel.one_star_count or 0) + 1
-    elif payload.rating == 2: reel.two_star_count = (reel.two_star_count or 0) + 1
-    elif payload.rating == 3: reel.three_star_count = (reel.three_star_count or 0) + 1
-
-    interaction = create_interaction(db, user_id=current_user.id, reel=reel, event_type="star", star_rating=payload.rating)
-    db.commit()
-
-    return {"success": True, "rating": payload.rating, "one_star_count": reel.one_star_count, "two_star_count": reel.two_star_count, "three_star_count": reel.three_star_count, "interaction_id": interaction.id}
-
-
-@router.delete("/{reel_id}/rating")
-def unrate_reel(reel_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    reel = get_reel_or_404(db, reel_id)
-    ensure_reel_access(reel, current_user)
-
-    row = db.query(ReelRating).filter(ReelRating.user_id == current_user.id, ReelRating.reel_id == reel_id).first()
-
-    if row:
-        if row.rating == 1: reel.one_star_count = max(0, (reel.one_star_count or 0) - 1)
-        elif row.rating == 2: reel.two_star_count = max(0, (reel.two_star_count or 0) - 1)
-        elif row.rating == 3: reel.three_star_count = max(0, (reel.three_star_count or 0) - 1)
-        db.delete(row)
-        db.commit()
-
-    return {"success": True, "rating": None, "one_star_count": reel.one_star_count or 0, "two_star_count": reel.two_star_count or 0, "three_star_count": reel.three_star_count or 0}
-
-
-# =========================================================
 # REEL LIKE / UNLIKE
 # =========================================================
 
