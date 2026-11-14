@@ -39,6 +39,7 @@ from ..database.models import (
     ReelDownload,
     ReelShare,
     ReelRating,
+    ReelLike,
     ReelInteraction,
     UserReelHistory,
     ReelAIFeature,
@@ -792,6 +793,111 @@ def unrate_reel(reel_id: int, db: Session = Depends(get_db), current_user: User 
         db.commit()
 
     return {"success": True, "rating": None, "one_star_count": reel.one_star_count or 0, "two_star_count": reel.two_star_count or 0, "three_star_count": reel.three_star_count or 0}
+
+
+# =========================================================
+# REEL LIKE / UNLIKE
+# =========================================================
+
+@router.post("/{reel_id}/like")
+def like_reel(
+    reel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = get_reel_or_404(db, reel_id)
+    ensure_reel_access(reel, current_user)
+
+    existing = db.query(ReelLike).filter(
+        ReelLike.user_id == current_user.id,
+        ReelLike.reel_id == reel_id,
+    ).first()
+
+    if existing:
+        return {
+            "success": True,
+            "liked": True,
+            "likes_count": reel.likes_count or 0,
+        }
+
+    db.add(ReelLike(
+        user_id=current_user.id,
+        reel_id=reel_id,
+        created_at=utc_now(),
+    ))
+
+    reel.likes_count = (reel.likes_count or 0) + 1
+
+    interaction = create_interaction(
+        db,
+        user_id=current_user.id,
+        reel=reel,
+        event_type="like",
+    )
+
+    db.commit()
+
+    return {
+        "success": True,
+        "liked": True,
+        "likes_count": reel.likes_count,
+        "interaction_id": interaction.id,
+    }
+
+
+@router.delete("/{reel_id}/like")
+def unlike_reel(
+    reel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = get_reel_or_404(db, reel_id)
+    ensure_reel_access(reel, current_user)
+
+    existing = db.query(ReelLike).filter(
+        ReelLike.user_id == current_user.id,
+        ReelLike.reel_id == reel_id,
+    ).first()
+
+    if existing:
+        db.delete(existing)
+        reel.likes_count = max(0, (reel.likes_count or 0) - 1)
+
+        create_interaction(
+            db,
+            user_id=current_user.id,
+            reel=reel,
+            event_type="unlike",
+        )
+
+        db.commit()
+
+    return {
+        "success": True,
+        "liked": False,
+        "likes_count": reel.likes_count or 0,
+    }
+
+
+@router.get("/{reel_id}/liked")
+def reel_like_status(
+    reel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = get_reel_or_404(db, reel_id)
+    ensure_reel_access(reel, current_user)
+
+    liked = db.query(ReelLike.id).filter(
+        ReelLike.user_id == current_user.id,
+        ReelLike.reel_id == reel_id,
+    ).first() is not None
+
+    return {
+        "success": True,
+        "liked": liked,
+        "likes_count": reel.likes_count or 0,
+    }
 
 
 # =========================================================
