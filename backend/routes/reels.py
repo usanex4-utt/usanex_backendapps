@@ -565,7 +565,7 @@ def get_reel_analytics_period(period: str, now: datetime):
 
 @router.get("/me/analytics")
 def get_my_reels_analytics(
-    period: str = Query("daily"),
+    period: str = Query("total"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
