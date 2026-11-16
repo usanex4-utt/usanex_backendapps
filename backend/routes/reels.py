@@ -651,12 +651,16 @@ def get_my_reels_analytics(
         bucket["watch_time"] = round(bucket["watch_time"], 2)
 
     individual_reels = []
-    history_by_reel = {
-        row.reel_id: row for row in history_rows
-    }
+    watch_time_by_reel = {}
+
+    for row in history_rows:
+        watch_time_by_reel[row.reel_id] = (
+            watch_time_by_reel.get(row.reel_id, 0)
+            + (row.total_watch_time or 0)
+        )
 
     for reel in reels_db:
-        history = history_by_reel.get(reel.id)
+        reel_watch_time = watch_time_by_reel.get(reel.id, 0)
         views = reel.views_count or 0
         completed = reel.completed_views_count or 0
 
