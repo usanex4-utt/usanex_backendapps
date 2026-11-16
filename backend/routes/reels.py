@@ -298,6 +298,13 @@ class ReportRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=MAX_REPORT_DESCRIPTION)
 
+class ReelUpdateRequest(BaseModel):
+    caption: Optional[str] = Field(default=None, max_length=MAX_CAPTION_LENGTH)
+    category: Optional[str] = Field(default=None, max_length=100)
+    hashtags: Optional[str] = Field(default=None, max_length=MAX_HASHTAGS_LENGTH)
+    language: Optional[str] = Field(default=None, max_length=50)
+    
+
 
 # =========================================================
 # HELPERS
