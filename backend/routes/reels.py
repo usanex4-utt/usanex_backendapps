@@ -3,8 +3,6 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-import uuid
-
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -25,6 +23,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from ..core.redis_client import get_redis
 from ..database.database import get_db
@@ -88,7 +87,7 @@ FEED_CACHE_TTL = 30
 FEED_CACHE_PATTERN = "usanex:reels:feed:*"
 
 
-# =========================================================
+# ========================================================
 # CLOUDINARY
 # =========================================================
 
@@ -421,6 +420,13 @@ class ReportRequest(BaseModel):
     reason: str = Field(min_length=1, max_length=100)
     description: Optional[str] = Field(default=None, max_length=MAX_REPORT_DESCRIPTION)
 
+class ReelUpdateRequest(BaseModel):
+    caption: Optional[str] = Field(default=None, max_length=MAX_CAPTION_LENGTH)
+    category: Optional[str] = Field(default=None, max_length=100)
+    hashtags: Optional[str] = Field(default=None, max_length=MAX_HASHTAGS_LENGTH)
+    language: Optional[str] = Field(default=None, max_length=50)
+    
+
 
 # =========================================================
 # HELPERS
@@ -647,6 +653,10 @@ def get_my_reels(
         "owner": serialize_user(current_user),
     }
 
+
+# =========================================================
+# USER REELS
+# =========================================================
 
 @router.get("/user/{user_id}/list")
 def get_user_reels(
@@ -1003,7 +1013,6 @@ async def like_reel(
         "likes_count": reel.likes_count,
         "interaction_id": interaction.id,
     }
-
 
 @router.delete("/{reel_id}/like")
 async def unlike_reel(
