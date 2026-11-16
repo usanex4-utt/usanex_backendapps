@@ -572,16 +572,6 @@ def get_my_reels_analytics(
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 start, bucket_type, bucket_count = get_reel_analytics_period(period, now)
 
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-
-start, bucket_type, bucket_count = get_reel_analytics_period(
-    period,
-    now,
-)
-        start = month_start.replace(
-            year=month_start.year - (1 if month_start.month == 1 else 0),
-            month=12 if month_start.month == 1 else month_start.month - 1,
-        )
 
     reels_db = (
         db.query(Reel)
