@@ -654,7 +654,18 @@ def get_my_reels_analytics(
 
     else:
         if period == "six_months":
-            first_month = start.replace(day=1)
+            month = now.month - 5
+            year = now.year
+
+            while month <= 0:
+                month += 12
+                year -= 1
+
+            first_month = now.replace(
+               year=year,
+               month=month,
+               day=1,
+            )
             bucket_total = 6
         else:
             first_date = min(
