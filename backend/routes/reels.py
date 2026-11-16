@@ -673,9 +673,7 @@ def get_my_reels_analytics(
             "likes": reel.likes_count or 0,
             "comments": reel.comment_count or 0,
             "shares": reel.share_count or 0,
-            "watch_time": round(
-                history.total_watch_time or 0, 2
-            ) if history else 0,
+            "watch_time": round(reel_watch_time, 2),
             "completion_rate": round(
                 (completed / views) * 100, 2
             ) if views else 0,
