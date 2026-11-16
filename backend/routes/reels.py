@@ -656,17 +656,6 @@ def get_my_reels_analytics(
         if period == "six_months":
             first_month = start.replace(day=1)
             bucket_total = 7
-
-            while month <= 0:
-                month += 12
-                year -= 1
-
-            first_month = now.replace(
-               year=year,
-               month=month,
-               day=1,
-            )
-            bucket_total = 6
         else:
             first_date = min(
                 [r.created_at for r in reels_db if r.created_at]
