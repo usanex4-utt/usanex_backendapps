@@ -569,11 +569,8 @@ def get_my_reels_analytics(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if period not in {"daily", "weekly", "monthly"}:
-        raise HTTPException(
-            status_code=400,
-            detail="Period must be daily, weekly, or monthly",
-        )
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+start, bucket_type, bucket_count = get_reel_analytics_period(period, now)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
