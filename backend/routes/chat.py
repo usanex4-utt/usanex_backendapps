@@ -149,7 +149,10 @@ def find_user(db: Session, identifier: str):
 
 def require_connected(db: Session, user_a_id: int, user_b_id: int):
     if user_a_id == user_b_id:
-        raise HTTPException(status_code=400, detail="You cannot chat with yourself.")
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot chat with yourself."
+        )
 
     connection = (
         db.query(UserConnection)
@@ -168,13 +171,14 @@ def require_connected(db: Session, user_a_id: int, user_b_id: int):
         )
         .first()
     )
+
     if connection is None:
         raise HTTPException(
             status_code=403,
-            detail="You can chat only with an accepted connection.",
+            detail="You can only chat after your connection request is accepted.",
         )
-    return connection
 
+    return connection
 
 def serialize_user(user):
     return {

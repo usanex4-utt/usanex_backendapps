@@ -180,32 +180,106 @@ def get_follow(db: Session, follower_id: int, following_id: int):
     )
 
 
+
+
 # ============================================================
 # FOLLOW USER
 # ============================================================
 
 @router.post("/follow")
-async def follow_user(body: FollowBody, request: Request, db: Session = Depends(get_db)):
+async def follow_user(
+    body: FollowBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     current_user = await get_authenticated_user(request, db)
-    target_user = db.query(User).filter(User.user_id == body.user_id.strip()).first()
-    if target_user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-    if target_user.id == current_user.id:
-        raise HTTPException(status_code=400, detail="You cannot follow yourself")
 
-    existing_follow = get_follow(db, current_user.id, target_user.id)
-    if existing_follow:
-        return {"success": True, "status": "following", "message": "Already following", "user_id": target_user.user_id}
-
-    follow = UserFollow(
-        follower_id=current_user.id,
-        following_id=target_user.id,
-        created_at=datetime.utcnow(),
+    target_user = (
+        db.query(User)
+        .filter(User.user_id == body.user_id.strip())
+        .first()
     )
-    db.add(follow)
-    db.commit()
-    db.refresh(follow)
-    return {"success": True, "status": "following", "message": "User followed successfully", "user_id": target_user.user_id}
+
+    if target_user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    if target_user.id == current_user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="You cannot follow yourself"
+        )
+
+    # Check existing follow
+    existing_follow = get_follow(
+        db,
+        current_user.id,
+        target_user.id
+    )
+
+    if existing_follow:
+        return {
+            "success": True,
+            "status": "following",
+            "message": "Already following",
+            "user_id": target_user.user_id
+        }
+
+    now = datetime.utcnow()
+
+    try:
+        # ----------------------------------------------------
+        # CREATE FOLLOW
+        # ----------------------------------------------------
+
+        follow = UserFollow(
+            follower_id=current_user.id,
+            following_id=target_user.id,
+            created_at=now,
+        )
+
+        db.add(follow)
+        db.flush()
+
+        # ----------------------------------------------------
+        # CREATE FOLLOW NOTIFICATION
+        # ----------------------------------------------------
+
+        notif = ConnectionNotification(
+            receiver_id=target_user.id,
+            sender_id=current_user.id,
+            connection_request_id=None,
+            verification_id=None,
+            notification_type="follow",
+            encrypted_code=None,
+            is_read=0,
+            created_at=now,
+        )
+
+        db.add(notif)
+
+        # ----------------------------------------------------
+        # COMMIT BOTH RECORDS
+        # ----------------------------------------------------
+
+        db.commit()
+        db.refresh(follow)
+        db.refresh(notif)
+
+        return {
+            "success": True,
+            "status": "following",
+            "message": "User followed successfully",
+            "user_id": target_user.user_id,
+            "notification_id": notif.id,
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
 
 
 # ============================================================
@@ -487,55 +561,141 @@ async def get_connection_requests(request: Request, db: Session = Depends(get_db
     return {"success": True, "requests": result}
 
 
+
+
+
 # ============================================================
 # NOTIFICATIONS
 # ============================================================
 
 @router.get("/notifications")
-async def get_connection_notifications(request: Request, db: Session = Depends(get_db)):
+async def get_connection_notifications(
+    request: Request,
+    db: Session = Depends(get_db)
+):
     current_user = await get_authenticated_user(request, db)
+
     rows = (
         db.query(ConnectionNotification)
-        .filter(ConnectionNotification.receiver_id == current_user.id)
+        .filter(
+            ConnectionNotification.receiver_id == current_user.id
+        )
         .order_by(ConnectionNotification.id.desc())
         .limit(100)
         .all()
     )
 
     result = []
+
     for row in rows:
-        sender = db.query(User).filter(User.id == row.sender_id).first()
+
+        # ----------------------------------------------------
+        # GET SENDER
+        # ----------------------------------------------------
+
+        sender = (
+            db.query(User)
+            .filter(User.id == row.sender_id)
+            .first()
+        )
+
         if sender is None:
             continue
 
-        request_row = db.query(ConnectionRequest).filter(ConnectionRequest.id == row.connection_request_id).first()
+        # ----------------------------------------------------
+        # GET CONNECTION REQUEST
+        # ----------------------------------------------------
+
+        request_row = None
+
+        if row.connection_request_id is not None:
+            request_row = (
+                db.query(ConnectionRequest)
+                .filter(
+                    ConnectionRequest.id == row.connection_request_id
+                )
+                .first()
+            )
+
+        # ----------------------------------------------------
+        # NOTIFICATION MESSAGE
+        # ----------------------------------------------------
 
         if row.notification_type == "connection_request":
-            message = f"Request sent by @{sender.username} ({sender.user_id})"
+
+            message = (
+                f"Request sent by @{sender.username} "
+                f"({sender.user_id})"
+            )
+
         elif row.notification_type == "connection_accepted":
-            message = f"@{sender.username} accepted your connection request."
+
+            message = (
+                f"@{sender.username} accepted your connection request."
+            )
+
         elif row.notification_type == "connection_rejected":
-            message = f"@{sender.username} rejected your connection request."
+
+            message = (
+                f"@{sender.username} rejected your connection request."
+            )
+
+        elif row.notification_type == "follow":
+
+            message = (
+                f"@{sender.username} started following you."
+            )
+
         else:
+
             message = "You have a new notification."
+
+        # ----------------------------------------------------
+        # APPEND NOTIFICATION
+        # ----------------------------------------------------
 
         result.append({
             "id": row.id,
             "notification_id": row.id,
+
             "type": row.notification_type,
             "notification_type": row.notification_type,
+
             "sender_id": sender.id,
             "sender_user_id": sender.user_id,
             "sender_username": sender.username,
             "sender_name": sender.name,
+
             "sender_profile_picture": sender.profile_photo,
+
             "message": message,
-            "connection_request_id": request_row.id if request_row else row.connection_request_id,
-            "request_id": request_row.id if request_row else row.connection_request_id,
+
+            "connection_request_id": (
+                request_row.id
+                if request_row
+                else row.connection_request_id
+            ),
+
+            "request_id": (
+                request_row.id
+                if request_row
+                else row.connection_request_id
+            ),
+
             "is_read": bool(row.is_read),
-            "created_at": row.created_at.isoformat() if row.created_at else None,
+
+            "created_at": (
+                row.created_at.isoformat()
+                if row.created_at
+                else None
+            ),
         })
-    return {"success": True, "notifications": result}
+
+    return {
+        "success": True,
+        "notifications": result
+    }
+
 
 
 # ============================================================

@@ -1,4 +1,3 @@
-
 # =========================================================
 # USANEX — COUPLE REALTIME WEBSOCKET
 # backend/routes/couple_realtime.py
@@ -12,6 +11,7 @@ import logging
 
 from datetime import datetime, timezone
 
+
 from fastapi import (
     APIRouter,
     WebSocket,
@@ -21,9 +21,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from ..database.database import SessionLocal
-
-from ..database.models import User
-
+from ..database.models import User, UserSession
 from ..database.couple_models import (
     CouplePresence,
     utcnow,
@@ -32,6 +30,12 @@ from ..database.couple_models import (
 from ..routes.auth import (
     SESSION_COOKIE_NAME,
     get_valid_session,
+)
+
+# 👇 FIX: missing import that caused `NameError: name 'can_chat' is not defined`
+from ..services.access_control import (
+    can_chat,
+    CHAT_BLOCKED_MESSAGE,
 )
 
 from ..services.redis import (
@@ -83,9 +87,7 @@ except Exception as exc:
 # ROUTER
 # =========================================================
 
-router = APIRouter(
-    tags=["Couple Realtime"]
-)
+router = APIRouter(tags=["Couple Realtime"])
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +103,6 @@ HEARTBEAT_TIMEOUT_SECONDS = 75
 HEARTBEAT_CHECK_INTERVAL_SECONDS = 15
 
 MOOD_TTL_SECONDS = 86400
-
 
 ALLOWED_MOODS = {
     "romantic",
@@ -149,28 +150,17 @@ _mood_ai_disabled = not _MOOD_MODEL_AVAILABLE
 # =========================================================
 
 def utc_now_iso() -> str:
-
-    return datetime.now(
-        timezone.utc
-    ).isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def to_utc_iso(value):
-
     if value is None:
         return None
 
     if value.tzinfo is None:
-
-        value = value.replace(
-            tzinfo=timezone.utc
-        )
-
+        value = value.replace(tzinfo=timezone.utc)
     else:
-
-        value = value.astimezone(
-            timezone.utc
-        )
+        value = value.astimezone(timezone.utc)
 
     return value.isoformat()
 
@@ -179,202 +169,139 @@ def to_utc_iso(value):
 # DATABASE HELPERS
 # =========================================================
 
-def get_user(
-    db: Session,
-    user_id: int,
-):
-
-    return (
-        db.query(User)
-        .filter(
-            User.id == user_id
-        )
-        .first()
-    )
+def get_user(db: Session, user_id: int):
+    return db.query(User).filter(User.id == user_id).first()
 
 
-def get_user_by_public_id(
-    db: Session,
-    public_user_id: str,
-):
-
+def get_user_by_public_id(db: Session, public_user_id: str):
     if not public_user_id:
         return None
 
     return (
         db.query(User)
-        .filter(
-            User.user_id == public_user_id
-        )
+        .filter(User.user_id == public_user_id)
         .first()
     )
+
+
+# =========================================================
+# AUTH
+# =========================================================
+
+async def _authenticate_ws(
+    db: Session,
+    session_token: str,
+):
+    """Return User or None. Uses the same session path as HTTP routes."""
+    if not session_token:
+        return None
+
+    try:
+        session = await get_valid_session(db, session_token)
+    except Exception:
+        logger.exception("get_valid_session failed in couple WS")
+        return None
+
+    if session is None:
+        return None
+
+    user = (
+        db.query(User)
+        .filter(User.id == session.user_id)
+        .first()
+    )
+
+    if user is None:
+        return None
+
+    if not getattr(user, "is_active", True):
+        return None
+
+    return user
 
 
 # =========================================================
 # PRESENCE DATABASE HELPERS
 # =========================================================
 
-def get_or_create_presence(
-    db: Session,
-    user_id: int,
-):
-
+def get_or_create_presence(db: Session, user_id: int):
     presence = (
         db.query(CouplePresence)
-        .filter(
-            CouplePresence.user_id == user_id
-        )
+        .filter(CouplePresence.user_id == user_id)
         .first()
     )
 
     if presence is not None:
         return presence
 
-    presence = CouplePresence(
-        user_id=user_id,
-        is_online=False,
-    )
-
+    presence = CouplePresence(user_id=user_id, is_online=False)
     db.add(presence)
 
     try:
-
         db.commit()
-
         db.refresh(presence)
-
         return presence
-
     except Exception:
-
         db.rollback()
-
-        logger.exception(
-            "Could not create presence for user %s",
-            user_id,
-        )
-
+        logger.exception("Could not create presence for user %s", user_id)
         return (
             db.query(CouplePresence)
-            .filter(
-                CouplePresence.user_id == user_id
-            )
+            .filter(CouplePresence.user_id == user_id)
             .first()
         )
 
 
-def save_user_online(
-    db: Session,
-    user_id: int,
-    room_id: int,
-):
-
-    presence = get_or_create_presence(
-        db,
-        user_id,
-    )
-
+def save_user_online(db: Session, user_id: int, room_id: int):
+    presence = get_or_create_presence(db, user_id)
     if presence is None:
         return
 
     try:
-
         presence.is_online = True
-
         presence.last_online_at = utcnow()
-
         presence.current_room_id = room_id
-
         presence.updated_at = utcnow()
-
         db.commit()
-
     except Exception:
-
         db.rollback()
-
-        logger.exception(
-            "Failed to save user online status: %s",
-            user_id,
-        )
+        logger.exception("Failed to save user online status: %s", user_id)
 
 
-def save_user_offline(
-    db: Session,
-    user_id: int,
-):
-
-    presence = get_or_create_presence(
-        db,
-        user_id,
-    )
-
+def save_user_offline(db: Session, user_id: int):
+    presence = get_or_create_presence(db, user_id)
     if presence is None:
         return
 
     try:
-
         presence.is_online = False
-
         presence.last_seen_at = utcnow()
-
         presence.current_room_id = None
-
         presence.updated_at = utcnow()
-
         db.commit()
-
     except Exception:
-
         db.rollback()
-
-        logger.exception(
-            "Failed to save user offline status: %s",
-            user_id,
-        )
+        logger.exception("Failed to save user offline status: %s", user_id)
 
 
-# =========================================================
-# USER PRESENCE
-# =========================================================
-
-async def get_presence_payload(
-    db: Session,
-    user_id: int,
-):
-
+async def get_presence_payload(db: Session, user_id: int):
     presence = (
         db.query(CouplePresence)
-        .filter(
-            CouplePresence.user_id == user_id
-        )
+        .filter(CouplePresence.user_id == user_id)
         .first()
     )
 
     try:
-
-        is_online = await presence_service.is_online(
-            user_id
-        )
-
+        is_online = await presence_service.is_online(user_id)
     except Exception:
-
         logger.warning(
             "Redis presence lookup failed for user %s",
             user_id,
             exc_info=True,
         )
-
-        is_online = bool(
-            presence and presence.is_online
-        )
+        is_online = bool(presence and presence.is_online)
 
     if is_online:
-
-        return {
-            "is_online": True,
-            "last_seen": None,
-        }
+        return {"is_online": True, "last_seen": None}
 
     return {
         "is_online": False,
@@ -391,7 +318,6 @@ async def get_presence_payload(
 # =========================================================
 
 def _get_mood_ai():
-
     global _mood_ai
     global _mood_ai_disabled
 
@@ -402,1131 +328,566 @@ def _get_mood_ai():
         return _mood_ai
 
     try:
-
-        clf = MoodClassifier()
-
-        if clf.total_moods == 0:
-
-            _mood_ai_disabled = True
-
-            return None
-
-        _mood_ai = clf
-
-    except Exception:
-
-        logger.exception(
-            "Could not initialize mood classifier"
+        _mood_ai = MoodClassifier()
+        logger.info("Couple WS mood model loaded")
+        return _mood_ai
+    except Exception as exc:
+        logger.warning(
+            "Could not instantiate MoodClassifier: %s",
+            exc,
         )
-
         _mood_ai_disabled = True
-
         return None
 
-    return _mood_ai
 
-
-# =========================================================
-# REDIS MOOD HELPERS
-# =========================================================
-
-async def _get_room_mood(
-    room_id: int,
-):
-
-    try:
-
-        from ..core.redis_client import get_redis
-
-        redis = get_redis()
-
-        value = await redis.get(
-            f"usanex:couple:mood:{room_id}"
-        )
-
-        if value:
-
-            return (
-                value.decode()
-                if isinstance(value, bytes)
-                else value
-            )
-
-    except Exception:
-
-        logger.debug(
-            "Redis mood read failed",
-            exc_info=True,
-        )
-
-    return _room_moods.get(room_id)
-
-
-async def _set_room_mood(
-    room_id: int,
-    mood: str,
-):
-
-    _room_moods[room_id] = mood
-
-    try:
-
-        from ..core.redis_client import get_redis
-
-        redis = get_redis()
-
-        await redis.set(
-            f"usanex:couple:mood:{room_id}",
-            mood,
-            ex=MOOD_TTL_SECONDS,
-        )
-
-    except Exception:
-
-        logger.debug(
-            "Redis mood write failed",
-            exc_info=True,
-        )
-
-
-# =========================================================
-# AUTOMATIC MOOD DETECTION
-# =========================================================
-
-async def _maybe_auto_mood(
-    room,
-    sender: User,
-    partner: User,
-    content: str | None,
-):
-
-    if not content:
-        return
-
+async def _predict_mood_async(text: str) -> str | None:
     ai = _get_mood_ai()
-
     if ai is None:
+        return None
+
+    try:
+        return await asyncio.to_thread(ai.predict, text)
+    except Exception:
+        logger.exception("mood prediction failed")
+        return None
+
+
+# =========================================================
+# MESSAGE HANDLER (per incoming `{type: "message"}` payload)
+# =========================================================
+
+async def _handle_incoming_message(
+    websocket: WebSocket,
+    db: Session,
+    current_user: User,
+    partner_id: int,
+    room,
+    payload: dict,
+):
+    content = (payload.get("content") or "").strip()
+    media_url = payload.get("media_url")
+    media_type = payload.get("media_type")
+    message_type = payload.get("message_type") or "text"
+    client_message_id = payload.get("client_message_id")
+    reply_to_id = payload.get("reply_to_message_id")
+
+    # Validation
+    if not content and not media_url:
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Message cannot be empty",
+                "client_message_id": client_message_id,
+            })
+        except Exception:
+            pass
         return
 
-    words = set(
-        tokenize(content)
-    )
-
-    if not words:
+    if len(content) > MAX_MESSAGE_LENGTH:
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Message too long (max {MAX_MESSAGE_LENGTH})",
+                "client_message_id": client_message_id,
+            })
+        except Exception:
+            pass
         return
 
-    best_mood = None
+    # Idempotency: same client_message_id from same user = same message
+    idem_key = None
+    if client_message_id:
+        idem_key = f"couple:msg:{current_user.id}:{client_message_id}"
+        try:
+            if not await idempotency.acquire(idem_key, ttl=300):
+                cached = await idempotency.get_result(idem_key)
+                if cached:
+                    try:
+                        await websocket.send_json(cached)
+                    except Exception:
+                        pass
+                    return
+        except Exception:
+            pass  # fail-open — allow duplicate processing if Redis is down
 
-    max_matches = 0
-
-    for mood, word_counts in ai.word_counts.items():
-
-        matches = sum(
-            1
-            for word in words
-            if word in word_counts
+    # Persist
+    try:
+        new_msg = await create_couple_message(
+            db=db,
+            room_id=room.id,
+            sender_id=current_user.id,
+            receiver_id=partner_id,
+            content=content or None,
+            media_url=media_url,
+            media_type=media_type,
+            message_type=message_type,
+            reply_to_message_id=reply_to_id,
         )
-
-        if matches > max_matches:
-
-            max_matches = matches
-
-            best_mood = mood
-
-    if not best_mood or max_matches == 0:
+    except Exception:
+        logger.exception("create_couple_message failed")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Could not save message",
+                "client_message_id": client_message_id,
+            })
+        except Exception:
+            pass
         return
 
-    current_mood = await _get_room_mood(
-        room.id
-    )
+    serialized = serialize_message(new_msg)
 
-    if current_mood == best_mood:
-        return
-
-    await _set_room_mood(
-        room.id,
-        best_mood,
-    )
-
-    payload = {
-        "type": "mood",
-        "mood": best_mood,
-        "user_id": sender.id,
-        "room_id": room.id,
-        "auto": True,
+    # Echo to sender
+    sender_event = {
+        "type": "message",
+        "id": new_msg.id,
+        "sender_id": current_user.id,
+        "client_message_id": client_message_id,
+        "content": content,
+        "media_url": media_url,
+        "media_type": media_type,
+        "message_type": message_type,
+        "created_at": serialized.get("created_at"),
+        "timestamp": serialized.get("created_at"),
+        "status": "sent",
     }
 
-    await couple_manager.send_to_user(
-        user_id=sender.id,
-        event=payload,
-    )
-
-    await couple_manager.send_to_user(
-        user_id=partner.id,
-        event=payload,
-    )
-
-    logger.info(
-        "Mood detected: %s -> %s",
-        content,
-        best_mood,
-    )
-
-
-# =========================================================
-# MESSAGE SERIALIZATION
-# =========================================================
-
-def _msg_to_dict(message):
-
-    if isinstance(message, dict):
-        return message
-
-    response = serialize_message(message)
-
-    if isinstance(response, dict):
-        return response
-
-    if hasattr(response, "model_dump"):
-
-        return response.model_dump(
-            mode="json"
-        )
-
-    if hasattr(response, "dict"):
-
-        return response.dict()
-
-    return response
-
-
-# =========================================================
-# HEARTBEAT MONITOR
-# =========================================================
-
-async def monitor_heartbeat(
-    websocket: WebSocket,
-    user_id: int,
-):
-
     try:
-
-        while True:
-
-            await asyncio.sleep(
-                HEARTBEAT_CHECK_INTERVAL_SECONDS
-            )
-
-            age = couple_manager.heartbeat_age(
-                websocket
-            )
-
-            if age is None:
-                return
-
-            if age >= HEARTBEAT_TIMEOUT_SECONDS:
-
-                logger.warning(
-                    "Heartbeat timeout for user %s",
-                    user_id,
-                )
-
-                try:
-
-                    await websocket.close(
-                        code=1001,
-                        reason="Heartbeat timeout",
-                    )
-
-                except Exception:
-
-                    pass
-
-                return
-
-    except asyncio.CancelledError:
-
-        raise
-
+        await websocket.send_json(sender_event)
     except Exception:
+        logger.exception("failed to echo message to sender")
 
-        logger.exception(
-            "Heartbeat monitor failed"
+    # Relay to partner (cross-worker via Redis)
+    partner_event = {k: v for k, v in sender_event.items() if k != "status"}
+    partner_event["receiver_id"] = partner_id
+    try:
+        await couple_manager.send_to_user(partner_id, partner_event)
+    except Exception:
+        logger.exception("failed to relay message to partner")
+
+    # Delivery receipt (best-effort)
+    try:
+        await asyncio.to_thread(
+            mark_message_delivered, db, new_msg.id, partner_id
         )
+        await couple_manager.send_to_user(current_user.id, {
+            "type": "message_receipt",
+            "message_id": new_msg.id,
+            "client_message_id": client_message_id,
+            "status": "delivered",
+        })
+    except Exception:
+        pass
+
+    # AI mood detection
+    if content:
+        mood = await _predict_mood_async(content)
+        if mood and mood in ALLOWED_MOODS:
+            _room_moods[room.id] = mood
+            mood_event = {"type": "mood", "mood": mood}
+            try:
+                await websocket.send_json(mood_event)
+            except Exception:
+                pass
+            try:
+                await couple_manager.send_to_user(partner_id, mood_event)
+            except Exception:
+                pass
+
+    # Cache idempotency result
+    if idem_key:
+        try:
+            await idempotency.store_result(idem_key, sender_event, ttl=300)
+        except Exception:
+            pass
 
 
 # =========================================================
 # WEBSOCKET ENDPOINT
 # =========================================================
 
-@router.websocket(
-    "/ws/couple/{partner_user_id}"
-)
+@router.websocket("/ws/couple/{partner_user_id}")
 async def couple_realtime(
     websocket: WebSocket,
     partner_user_id: str,
 ):
+    db = SessionLocal()
 
-    db: Session = SessionLocal()
-
-    current_user = None
-
-    partner = None
-
+    current_user: User | None = None
+    partner: User | None = None
     room = None
-
-    heartbeat_task = None
-
-    connected = False
+    registered = False
+    partner_id: int | None = None
 
     try:
-
         # -------------------------------------------------
-        # ACCEPT CONNECTION
+        # 1. ACCEPT FIRST (so client gets proper WS close codes)
         # -------------------------------------------------
-
-        await websocket.accept()
-
-        # -------------------------------------------------
-        # VALIDATE PARTNER ID
-        # -------------------------------------------------
-
-        partner_user_id = partner_user_id.strip()
-
-        if (
-            not partner_user_id
-            or len(partner_user_id) > 100
-        ):
-
-            await websocket.send_json({
-                "type": "error",
-                "message": "Invalid partner ID",
-            })
-
-            await websocket.close(
-                code=1008
-            )
-
+        try:
+            await websocket.accept()
+        except Exception:
+            logger.exception("WebSocket accept failed")
             return
 
         # -------------------------------------------------
-        # AUTHENTICATION
+        # 2. AUTHENTICATE
         # -------------------------------------------------
+        session_token = websocket.cookies.get(SESSION_COOKIE_NAME)
+        if not session_token:
+            session_token = websocket.query_params.get("token")
 
-        session_token = (
-            websocket.cookies.get(
-                SESSION_COOKIE_NAME
+        current_user = await _authenticate_ws(db, session_token or "")
+
+        if current_user is None:
+            logger.warning(
+                "Couple WS auth failed: partner=%s",
+                partner_user_id,
             )
-            or websocket.query_params.get("token")
-        )
-
-        session = await get_valid_session(
-            db=db,
-            session_token=session_token,
-        )
-
-        if session is None:
-
-            await websocket.send_json({
-                "type": "error",
-                "message": "Authentication required",
-            })
-
-            await websocket.close(
-                code=1008
-            )
-
-            return
-
-        session_user_id = (
-            session.get("user_id")
-            if isinstance(session, dict)
-            else session.user_id
-        )
-
-        current_user = get_user(
-            db=db,
-            user_id=session_user_id,
-        )
-
-        if (
-            current_user is None
-            or not getattr(
-                current_user,
-                "is_active",
-                True,
-            )
-        ):
-
-            await websocket.send_json({
-                "type": "error",
-                "message": "User not found or inactive",
-            })
-
-            await websocket.close(
-                code=1008
-            )
-
-            return
-
-        # -------------------------------------------------
-        # FIND PARTNER
-        # -------------------------------------------------
-
-        partner = get_user_by_public_id(
-            db=db,
-            public_user_id=partner_user_id,
-        )
-
-        if (
-            partner is None
-            and partner_user_id.isdigit()
-        ):
-
-            partner = get_user(
-                db=db,
-                user_id=int(partner_user_id),
-            )
-
-        if (
-            partner is None
-            or not getattr(
-                partner,
-                "is_active",
-                True,
-            )
-        ):
-
-            await websocket.send_json({
-                "type": "error",
-                "message": "Partner not found",
-            })
-
-            await websocket.close(
-                code=1008
-            )
-
-            return
-
-        if current_user.id == partner.id:
-
-            await websocket.send_json({
-                "type": "error",
-                "message": "Cannot chat with yourself",
-            })
-
-            await websocket.close(
-                code=1008
-            )
-
-            return
-
-        # -------------------------------------------------
-        # CREATE OR GET COUPLE ROOM
-        # -------------------------------------------------
-
-        room = get_or_create_couple_room(
-            db=db,
-            user_one_id=current_user.id,
-            user_two_id=partner.id,
-        )
-
-        # -------------------------------------------------
-        # CONNECT WEBSOCKET
-        # -------------------------------------------------
-
-        await couple_manager.connect(
-            user_id=current_user.id,
-            websocket=websocket,
-        )
-
-        connected = True
-
-        save_user_online(
-            db=db,
-            user_id=current_user.id,
-            room_id=room.id,
-        )
-
-        # -------------------------------------------------
-        # START HEARTBEAT
-        # -------------------------------------------------
-
-        heartbeat_task = asyncio.create_task(
-            monitor_heartbeat(
-                websocket=websocket,
-                user_id=current_user.id,
-            )
-        )
-
-        # -------------------------------------------------
-        # PARTNER PRESENCE
-        # -------------------------------------------------
-
-        partner_presence = await get_presence_payload(
-            db=db,
-            user_id=partner.id,
-        )
-
-        # -------------------------------------------------
-        # CONNECTION RESPONSE
-        # -------------------------------------------------
-
-        await websocket.send_json({
-
-            "type": "connected",
-
-            "user": {
-                "id": current_user.id,
-                "username": current_user.username,
-                "name": current_user.name,
-            },
-
-            "partner": {
-                "id": partner.id,
-                "username": partner.username,
-                "name": partner.name,
-            },
-
-            "room": {
-                "id": room.id,
-            },
-
-            "room_id": room.id,
-
-            "partner_online": (
-                partner_presence["is_online"]
-            ),
-
-            "partner_last_seen": (
-                partner_presence["last_seen"]
-            ),
-
-            "mood": await _get_room_mood(
-                room.id
-            ),
-
-            "timestamp": utc_now_iso(),
-
-        })
-
-        # -------------------------------------------------
-        # MESSAGE HISTORY
-        # -------------------------------------------------
-
-        messages = await get_couple_messages(
-            db=db,
-            room_id=room.id,
-            limit=50,
-        )
-
-        await websocket.send_json({
-
-            "type": "message_history",
-
-            "room_id": room.id,
-
-            "messages": [
-                _msg_to_dict(message)
-                for message in messages
-            ],
-
-            "timestamp": utc_now_iso(),
-
-        })
-
-        # -------------------------------------------------
-        # NOTIFY PARTNER ONLINE
-        # -------------------------------------------------
-
-        await couple_manager.send_presence(
-            receiver_id=partner.id,
-            user_id=current_user.id,
-            is_online=True,
-            last_seen=None,
-        )
-
-        # =================================================
-        # MAIN WEBSOCKET EVENT LOOP
-        # =================================================
-
-        while True:
-
-            raw_data = await websocket.receive_text()
-
             try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Authentication required",
+                })
+            except Exception:
+                pass
+            await websocket.close(code=4401, reason="Unauthorized")
+            return
 
-                data = json.loads(raw_data)
+        # -------------------------------------------------
+        # 3. PARTNER LOOKUP
+        # -------------------------------------------------
+        partner = get_user_by_public_id(db, partner_user_id)
 
-                if not isinstance(data, dict):
-                    continue
+        if partner is None or not getattr(partner, "is_active", True):
+            logger.warning(
+                "Couple WS partner missing: user=%s partner=%s",
+                current_user.id,
+                partner_user_id,
+            )
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Partner not found",
+                })
+            except Exception:
+                pass
+            await websocket.close(code=4404, reason="Partner not found")
+            return
 
-                event_type = data.get(
-                    "type",
-                    "",
-                )
+        if partner.id == current_user.id:
+            logger.warning(
+                "Couple WS blocked self-chat: user=%s",
+                current_user.id,
+            )
+            await websocket.close(code=1008, reason="Cannot chat with yourself")
+            return
 
-                if not isinstance(event_type, str):
-                    continue
+        partner_id = partner.id
 
-                event_type = event_type.strip()
+        # -------------------------------------------------
+        # 4. ACCESS GATE — the line that was crashing
+        # -------------------------------------------------
+        try:
+            can_chat_access = can_chat(db, current_user.id, partner_id)
+        except Exception:
+            logger.exception(
+                "can_chat() failed for user=%s partner=%s",
+                current_user.id,
+                partner_id,
+            )
+            can_chat_access = False
 
-            except (
-                json.JSONDecodeError,
-                TypeError,
-            ):
+        if not can_chat_access:
+            logger.warning(
+                "Couple WS denied: user=%s partner=%s not connected",
+                current_user.id,
+                partner_id,
+            )
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": CHAT_BLOCKED_MESSAGE,
+                })
+            except Exception:
+                pass
+            await websocket.close(
+                code=1008,
+                reason="Connection required",
+            )
+            return
 
-                continue
+        # -------------------------------------------------
+        # 5. REGISTER PRESENCE
+        # -------------------------------------------------
+        try:
+            await couple_manager.connect(websocket, current_user.id)
+            registered = True
+        except Exception:
+            logger.exception("couple_manager.connect failed")
+            await websocket.close(code=1011, reason="Server error")
+            return
 
-            # ---------------------------------------------
-            # TYPING START
-            # ---------------------------------------------
+        # -------------------------------------------------
+        # 6. ROOM + PRESENCE DB
+        # -------------------------------------------------
+        try:
+            room = await asyncio.to_thread(
+                get_or_create_couple_room,
+                db,
+                current_user.id,
+                partner_id,
+            )
+        except Exception:
+            logger.exception("Could not prepare couple room")
+            await websocket.close(code=1011, reason="Room setup failed")
+            return
 
-            if event_type == "typing_start":
+        save_user_online(db, current_user.id, room.id)
 
-                await couple_manager.send_typing(
-                    sender_id=current_user.id,
-                    receiver_id=partner.id,
-                    is_typing=True,
-                )
+        # -------------------------------------------------
+        # 7. INITIAL PRESENCE + MOOD
+        # -------------------------------------------------
+        partner_presence = await get_presence_payload(db, partner_id)
 
-            # ---------------------------------------------
-            # TYPING STOP
-            # ---------------------------------------------
+        room_mood = _room_moods.get(room.id)
+        if room_mood is None:
+            room_mood = "calm"
+            _room_moods[room.id] = room_mood
 
-            elif event_type == "typing_stop":
+        try:
+            await websocket.send_json({
+                "type": "connected",
+                "partner_online": partner_presence["is_online"],
+                "partner_last_seen": partner_presence["last_seen"],
+                "mood": room_mood,
+            })
+        except Exception:
+            logger.exception("failed to send connected event")
 
-                await couple_manager.send_typing(
-                    sender_id=current_user.id,
-                    receiver_id=partner.id,
-                    is_typing=False,
-                )
+        # -------------------------------------------------
+        # 8. MESSAGE HISTORY
+        # -------------------------------------------------
+        try:
+            history = await get_couple_messages(db, room.id, limit=50)
+            await websocket.send_json({
+                "type": "message_history",
+                "messages": [
+                    serialize_message(m) for m in history
+                ],
+            })
+        except Exception:
+            logger.exception("failed to send message history")
 
-            # ---------------------------------------------
-            # MOOD CHANGE
-            # ---------------------------------------------
+        # -------------------------------------------------
+        # 9. NOTIFY PARTNER: we're online
+        # -------------------------------------------------
+        try:
+            await couple_manager.send_presence(
+                receiver_id=partner_id,
+                user_id=current_user.id,
+                is_online=True,
+                last_seen=None,
+            )
+        except Exception:
+            pass
 
-            elif event_type in (
-                "mood_change",
-                "set_mood",
-                "mood",
-            ):
+        # -------------------------------------------------
+        # 10. HEARTBEAT TASK
+        # -------------------------------------------------
+        async def heartbeat_loop():
+            try:
+                while True:
+                    await asyncio.sleep(HEARTBEAT_CHECK_INTERVAL_SECONDS)
 
-                mood = data.get(
-                    "mood",
-                    "",
-                )
-
-                if (
-                    isinstance(mood, str)
-                    and mood in ALLOWED_MOODS
-                ):
-
-                    await _set_room_mood(
-                        room.id,
-                        mood,
-                    )
-
-                    payload = {
-
-                        "type": "mood",
-
-                        "mood": mood,
-
-                        "user_id": current_user.id,
-
-                        "room_id": room.id,
-
-                    }
-
-                    await websocket.send_json(
-                        payload
-                    )
-
-                    await couple_manager.send_to_user(
-                        user_id=partner.id,
-                        event=payload,
-                    )
-
-            # ---------------------------------------------
-            # SEND MESSAGE
-            # ---------------------------------------------
-
-            elif event_type == "message":
-
-                client_id = data.get(
-                    "client_message_id"
-                )
-
-                content = data.get(
-                    "content",
-                    "",
-                )
-
-                media_url = data.get(
-                    "media_url"
-                )
-
-                media_type = data.get(
-                    "media_type"
-                )
-
-                if not isinstance(content, str):
-                    continue
-
-                content = content.strip()
-
-                if len(content) > MAX_MESSAGE_LENGTH:
-
-                    await websocket.send_json({
-
-                        "type": "error",
-
-                        "message": "Message is too long",
-
-                        "client_message_id": client_id,
-
-                    })
-
-                    continue
-
-                if not content and not media_url:
-                    continue
-
-                # Validate media fields.
-
-                if (
-                    media_url is not None
-                    and not isinstance(media_url, str)
-                ):
-                    continue
-
-                if (
-                    media_type is not None
-                    and not isinstance(media_type, str)
-                ):
-                    continue
-
-                if (
-                    media_url is not None
-                    and len(media_url) > 2048
-                ):
-                    continue
-
-                if (
-                    media_type is not None
-                    and len(media_type) > 50
-                ):
-                    continue
-
-                if client_id is not None:
-
+                    age = couple_manager.heartbeat_age(websocket)
                     if (
-                        not isinstance(client_id, str)
-                        or not client_id.strip()
-                        or len(client_id) > 100
+                        age is not None
+                        and age > HEARTBEAT_TIMEOUT_SECONDS
                     ):
-
-                        continue
-
-                # -----------------------------------------
-                # IDEMPOTENCY
-                # -----------------------------------------
-
-                idem_key = (
-                    f"couple:{current_user.id}:{client_id}"
-                    if client_id
-                    else None
-                )
-
-                if (
-                    idem_key
-                    and not await idempotency.acquire(
-                        idem_key
-                    )
-                ):
-
-                    logger.debug(
-                        "Duplicate couple message: %s",
-                        idem_key,
-                    )
-
-                    continue
-
-                # -----------------------------------------
-                # SAVE MESSAGE
-                # -----------------------------------------
-
-                try:
-
-                    message = await create_couple_message(
-
-                        db=db,
-
-                        room_id=room.id,
-
-                        sender_id=current_user.id,
-
-                        receiver_id=partner.id,
-
-                        content=content,
-
-                        media_url=media_url,
-
-                        media_type=media_type,
-
-                    )
-
-                except Exception:
-
-                    if idem_key:
-
+                        logger.warning(
+                            "Couple WS heartbeat timeout: user=%s",
+                            current_user.id,
+                        )
                         try:
-
-                            await idempotency.release(
-                                idem_key
+                            await websocket.close(
+                                code=1001,
+                                reason="Heartbeat timeout",
                             )
-
                         except Exception:
-
-                            logger.exception(
-                                "Idempotency release failed"
-                            )
-
-                    logger.exception(
-                        "Failed to create couple message"
-                    )
-
-                    await websocket.send_json({
-
-                        "type": "error",
-
-                        "message": (
-                            "Message could not be saved. "
-                            "Try again."
-                        ),
-
-                        "client_message_id": client_id,
-
-                    })
-
-                    continue
-
-                # -----------------------------------------
-                # MESSAGE PAYLOAD
-                # -----------------------------------------
-
-                payload = {
-
-                    "type": "message",
-
-                    "id": message.id,
-
-                    "message_id": message.id,
-
-                    "client_message_id": client_id,
-
-                    "room_id": room.id,
-
-                    "sender_id": message.sender_id,
-
-                    "receiver_id": message.receiver_id,
-
-                    "content": message.content,
-
-                    "media_url": message.media_url,
-
-                    "media_type": message.media_type,
-
-                    "timestamp": to_utc_iso(
-                        message.created_at
-                    ),
-
-                }
-
-                # -----------------------------------------
-                # STORE IDEMPOTENCY RESULT
-                # -----------------------------------------
-
-                if idem_key:
+                            pass
+                        return
 
                     try:
-
-                        await idempotency.store_result(
-                            idem_key,
-                            payload,
+                        await couple_manager.touch(
+                            websocket,
+                            user_id=current_user.id,
                         )
-
                     except Exception:
+                        pass
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("heartbeat_loop crashed")
 
-                        logger.exception(
-                            "Failed to store idempotency result"
-                        )
+        heartbeat_task = asyncio.create_task(heartbeat_loop())
 
-                # -----------------------------------------
-                # SEND TO PARTNER
-                # -----------------------------------------
+        # -------------------------------------------------
+        # 11. MESSAGE LOOP
+        # -------------------------------------------------
+        try:
+            while True:
+                raw = await websocket.receive_text()
 
-                delivered = await couple_manager.send_to_user(
-                    user_id=partner.id,
-                    event=payload,
-                )
+                try:
+                    payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
 
-                # -----------------------------------------
-                # SEND TO SENDER
-                # -----------------------------------------
+                if not isinstance(payload, dict):
+                    continue
 
-                await websocket.send_json(
-                    payload
-                )
+                event_type = payload.get("type")
 
-                # -----------------------------------------
-                # MESSAGE RECEIPT
-                # -----------------------------------------
+                # ----- PING -----
+                if event_type == "ping":
+                    try:
+                        await websocket.send_json({"type": "pong"})
+                    except Exception:
+                        pass
+                    continue
 
-                if delivered:
-
-                    result = mark_message_delivered(
-                        db=db,
-                        message_id=message.id,
-                        receiver_id=partner.id,
+                # ----- TYPING -----
+                if event_type in ("typing", "typing_start", "typing_stop"):
+                    is_typing = (
+                        event_type == "typing_start"
+                        or payload.get("typing") is True
                     )
+                    try:
+                        await couple_manager.send_typing(
+                            sender_id=current_user.id,
+                            receiver_id=partner_id,
+                            is_typing=is_typing,
+                        )
+                    except Exception:
+                        pass
+                    continue
 
-                    if result:
+                # ----- MESSAGE READ -----
+                if event_type == "message_read":
+                    message_id = payload.get("message_id")
+                    if not message_id:
+                        continue
+                    try:
+                        message_id_int = int(message_id)
+                    except (TypeError, ValueError):
+                        continue
 
-                        await websocket.send_json({
+                    try:
+                        await asyncio.to_thread(
+                            mark_message_seen,
+                            db,
+                            message_id_int,
+                            current_user.id,
+                        )
+                    except Exception:
+                        logger.exception("mark_message_seen failed")
 
+                    try:
+                        await couple_manager.send_to_user(partner_id, {
                             "type": "message_receipt",
-
-                            "message_id": message.id,
-
-                            "status": "delivered",
-
+                            "message_id": message_id_int,
+                            "status": "seen",
                         })
-
-                else:
-
-                    await websocket.send_json({
-
-                        "type": "message_receipt",
-
-                        "message_id": message.id,
-
-                        "status": "sent",
-
-                    })
-
-                # -----------------------------------------
-                # AUTOMATIC MOOD DETECTION
-                # -----------------------------------------
-
-                try:
-
-                    await _maybe_auto_mood(
-                        room,
-                        current_user,
-                        partner,
-                        content,
-                    )
-
-                except Exception:
-
-                    logger.exception(
-                        "Automatic mood detection failed"
-                    )
-
-            # ---------------------------------------------
-            # MESSAGE DELIVERED
-            # ---------------------------------------------
-
-            elif event_type == "message_delivered":
-
-                message_id = data.get(
-                    "message_id"
-                )
-
-                try:
-
-                    if message_id is not None:
-
-                        mark_message_delivered(
-                            db=db,
-                            message_id=int(message_id),
-                            receiver_id=current_user.id,
-                        )
-
-                except (
-                    ValueError,
-                    TypeError,
-                ):
-
+                    except Exception:
+                        pass
                     continue
 
-            # ---------------------------------------------
-            # MESSAGE READ / SEEN
-            # ---------------------------------------------
-
-            elif event_type == "message_read":
-
-                message_id = data.get(
-                    "message_id"
-                )
-
-                try:
-
-                    if message_id is not None:
-
-                        message_id = int(message_id)
-
-                        mark_message_seen(
-                            db=db,
-                            message_id=message_id,
-                            receiver_id=current_user.id,
-                        )
-
-                        await couple_manager.send_to_user(
-
-                            user_id=partner.id,
-
-                            event={
-
-                                "type": "message_receipt",
-
-                                "message_id": message_id,
-
-                                "status": "seen",
-
-                            },
-
-                        )
-
-                except (
-                    ValueError,
-                    TypeError,
-                ):
-
+                # ----- MESSAGE -----
+                if event_type == "message":
+                    await _handle_incoming_message(
+                        websocket=websocket,
+                        db=db,
+                        current_user=current_user,
+                        partner_id=partner_id,
+                        room=room,
+                        payload=payload,
+                    )
                     continue
 
-            # ---------------------------------------------
-            # PING / PONG
-            # ---------------------------------------------
+                # Unknown event type — ignore silently
 
-            elif event_type == "ping":
+        finally:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except (asyncio.CancelledError, Exception):
+                pass
 
-                await couple_manager.touch(
-                    websocket
-                )
-
-                await websocket.send_json({
-
-                    "type": "pong",
-
-                    "timestamp": utc_now_iso(),
-
-                })
-
-    # =====================================================
-    # DISCONNECTION
-    # =====================================================
-
+    # -----------------------------------------------------
+    # EXCEPTIONS
+    # -----------------------------------------------------
     except WebSocketDisconnect:
-
-        logger.info(
-            "Couple WebSocket disconnected: user=%s",
-            getattr(current_user, "id", None),
-        )
-
+        pass
     except Exception:
-
         logger.exception(
             "Couple WebSocket crashed: user=%s",
             getattr(current_user, "id", None),
         )
+        try:
+            await websocket.close(code=1011, reason="Server error")
+        except Exception:
+            pass
 
-    # =====================================================
+    # -----------------------------------------------------
     # CLEANUP
-    # =====================================================
-
+    # -----------------------------------------------------
     finally:
-
-        # -------------------------------------------------
-        # STOP HEARTBEAT TASK
-        # -------------------------------------------------
-
-        if heartbeat_task:
-
-            heartbeat_task.cancel()
-
+        if registered and current_user is not None:
             try:
-
-                await heartbeat_task
-
-            except asyncio.CancelledError:
-
-                pass
-
+                went_offline = await couple_manager.disconnect(
+                    current_user.id,
+                    websocket,
+                )
             except Exception:
+                went_offline = False
 
-                logger.debug(
-                    "Heartbeat cleanup error",
-                    exc_info=True,
-                )
+            if went_offline:
+                try:
+                    save_user_offline(db, current_user.id)
+                except Exception:
+                    pass
 
-        # -------------------------------------------------
-        # DISCONNECT USER
-        # -------------------------------------------------
-
-        if current_user and connected:
-
-            try:
-
-                await couple_manager.disconnect(
-                    user_id=current_user.id,
-                    websocket=websocket,
-                )
-
-                # Only mark offline if no other socket
-                # remains connected for this user.
-
-                if not couple_manager.is_online(
-                    current_user.id
-                ):
-
-                    save_user_offline(
-                        db=db,
-                        user_id=current_user.id,
+                last_seen = None
+                try:
+                    p = (
+                        db.query(CouplePresence)
+                        .filter(CouplePresence.user_id == current_user.id)
+                        .first()
                     )
+                    if p is not None and p.last_seen_at is not None:
+                        last_seen = to_utc_iso(p.last_seen_at)
+                except Exception:
+                    pass
 
-                    if partner:
-
+                if partner_id is not None:
+                    try:
                         await couple_manager.send_presence(
-
-                            receiver_id=partner.id,
-
+                            receiver_id=partner_id,
                             user_id=current_user.id,
-
                             is_online=False,
-
-                            last_seen=utc_now_iso(),
-
+                            last_seen=last_seen,
                         )
-
-            except Exception:
-
-                logger.exception(
-                    "Couple WebSocket cleanup failed"
-                )
-
-        # -------------------------------------------------
-        # CLOSE DATABASE SESSION
-        # -------------------------------------------------
+                    except Exception:
+                        pass
 
         try:
-
             db.close()
-
         except Exception:
+            pass
 
-            logger.exception(
-                "Database session cleanup failed"
-            )
+
+# =========================================================
+# SANITY CHECK (fails at import time if the fix regresses)
+# =========================================================
+
+assert callable(can_chat), "access_control.can_chat must be imported"

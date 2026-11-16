@@ -1,4 +1,4 @@
-# backend/schemas/user.py
+
 from datetime import datetime
 from typing import Optional, List
 from pydantic import Field
@@ -23,6 +23,9 @@ class UserUpdate(BaseSchema):
     social_link: Optional[str] = Field(None, max_length=500)
     profile_photo: Optional[str] = Field(None, max_length=1000)
 
+    # NEW: Profile privacy
+    is_private: Optional[bool] = None
+
 
 # -------------------- READ --------------------
 
@@ -37,9 +40,14 @@ class UserResponse(BaseSchema):
     website: Optional[str] = None
     instagram: Optional[str] = None
     social_link: Optional[str] = None
+
     is_active: bool
     is_verified: bool
     is_admin: bool = False
+
+    # NEW: Profile privacy
+    is_private: bool = False
+
     last_seen_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
@@ -47,6 +55,7 @@ class UserResponse(BaseSchema):
 
 class UserPublicResponse(BaseSchema):
     """Public view — hides sensitive fields like mobile."""
+
     id: int
     username: str
     user_id: str
@@ -56,11 +65,16 @@ class UserPublicResponse(BaseSchema):
     website: Optional[str] = None
     instagram: Optional[str] = None
     social_link: Optional[str] = None
+
+    # NEW: Profile privacy
+    is_private: bool = False
+
     last_seen_at: Optional[datetime] = None
 
 
 class UserProfileResponse(UserPublicResponse):
     """Extended public profile with connection context."""
+
     is_connected: bool = False
     is_following: bool = False
     is_followed_by: bool = False

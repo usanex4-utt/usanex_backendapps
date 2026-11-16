@@ -131,10 +131,21 @@ class User(Base):
         nullable=False,
         default=False,
     )
+    # Admin permission
     is_admin = Column(
-        Boolean, 
+        Boolean,
         nullable=False,
-        default=False)
+        default=False,
+        server_default="false",
+    )
+
+    # Account privacy: False = public, True = private
+    is_private = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
     __table_args__ = (
         Index(
@@ -379,7 +390,65 @@ class ConnectionVerification(Base):
 # CONNECTION NOTIFICATION
 # =========================================================
 
+# =========================================================
+# CONNECTION NOTIFICATION
+# =========================================================
+
 class ConnectionNotification(Base):
+    __tablename__ = "connection_notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    receiver_id = Column(
+        Integer,
+        index=True,
+        nullable=False,
+    )
+
+    sender_id = Column(
+        Integer,
+        index=True,
+        nullable=False,
+    )
+
+    # NULL allowed for follow notifications
+    connection_request_id = Column(
+        Integer,
+        index=True,
+        nullable=True,
+    )
+
+    verification_id = Column(
+        Integer,
+        index=True,
+        nullable=True,
+    )
+
+    notification_type = Column(
+        String(50),
+        index=True,
+        nullable=False,
+    )
+
+    encrypted_code = Column(
+        String(500),
+        nullable=True,
+    )
+
+    is_read = Column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        index=True,
+        nullable=False,
+        default=utcnow,
+    )
+
+    
     __tablename__ = "connection_notifications"
 
     id = Column(Integer, primary_key=True, index=True)
