@@ -513,6 +513,56 @@ def get_my_reels(
     }
 
 
+
+def get_reel_analytics_period(period: str, now: datetime):
+    """Return the time range and graph bucket settings for reel analytics."""
+
+    allowed_periods = {
+        "last_hour",
+        "last_24_hours",
+        "weekly",
+        "monthly",
+        "six_months",
+        "total",
+    }
+
+    if period not in allowed_periods:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Period must be one of: {', '.join(sorted(allowed_periods))}",
+        )
+
+    if period == "last_hour":
+        return now - timedelta(hours=1), "minute", 12
+
+    if period == "last_24_hours":
+        return now - timedelta(hours=24), "hour", 24
+
+    if period == "weekly":
+        return now - timedelta(days=7), "day", 7
+
+    if period == "monthly":
+        return now - timedelta(days=30), "day", 30
+
+    if period == "six_months":
+        month = now.month - 6
+        year = now.year
+        while month <= 0:
+            month += 12
+            year -= 1
+
+        day = min(
+            now.day,
+            [31, 29 if year % 4 == 0 and (year % 100 != 0 or year % 400 == 0) else 28,
+             31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1]
+        )
+        start = now.replace(year=year, month=month, day=day)
+        return start, "month", 6
+
+    return None, "month", None
+    
+
+
 @router.get("/me/analytics")
 def get_my_reels_analytics(
     period: str = Query("daily"),
