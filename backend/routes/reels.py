@@ -574,20 +574,10 @@ start, bucket_type, bucket_count = get_reel_analytics_period(period, now)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-    if period == "daily":
-        bucket_count = 7
-        start = (now - timedelta(days=6)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-    elif period == "weekly":
-        bucket_count = 12
-        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        start = today - timedelta(days=today.weekday() + 7 * 11)
-    else:
-        bucket_count = 12
-        month_start = now.replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
+start, bucket_type, bucket_count = get_reel_analytics_period(
+    period,
+    now,
+)
         start = month_start.replace(
             year=month_start.year - (1 if month_start.month == 1 else 0),
             month=12 if month_start.month == 1 else month_start.month - 1,
