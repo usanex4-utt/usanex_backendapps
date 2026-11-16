@@ -617,6 +617,7 @@ def get_my_reels_analytics(
             "label": label,
             "views": 0,
             "likes": 0,
+            "unlikes": 0,
             "comments": 0,
             "shares": 0,
             "watch_time": 0,
@@ -640,6 +641,8 @@ def get_my_reels_analytics(
             bucket["watch_time"] += item.watch_time or 0
         elif item.event_type == "like":
             bucket["likes"] += 1
+        elif item.event_type == "unlike":
+            bucket["unlikes"] += 1
         elif item.event_type == "comment":
             bucket["comments"] += 1
         elif item.event_type == "share":
