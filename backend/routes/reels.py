@@ -1107,6 +1107,62 @@ def like_reel(
         "interaction_id": interaction.id,
     }
 
+@router.patch("/{reel_id}")
+async def update_my_reel(
+    reel_id: int,
+    payload: ReelUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = get_reel_or_404(db, reel_id)
+
+    if reel.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can edit only your own reel",
+        )
+
+    if reel.status == "deleted" or reel.visibility == "deleted":
+        raise HTTPException(
+            status_code=400,
+            detail="Deleted reel cannot be edited",
+        )
+
+    changes = payload.dict(exclude_unset=True)
+
+    if not changes:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one field is required",
+        )
+
+    limits = {
+        "caption": MAX_CAPTION_LENGTH,
+        "category": 100,
+        "hashtags": MAX_HASHTAGS_LENGTH,
+        "language": 50,
+    }
+
+    for field, value in changes.items():
+        setattr(
+            reel,
+            field,
+            normalize_optional_text(value, limits[field]),
+        )
+
+    reel.updated_at = utc_now()
+
+    db.commit()
+    db.refresh(reel)
+
+    await invalidate_feed_cache()
+
+    return {
+        "success": True,
+        "message": "Reel updated successfully",
+        "reel": serialize_reel(reel, current_user),
+    }
+    
 @router.delete("/{reel_id}/like")
 def unlike_reel(
     reel_id: int,
