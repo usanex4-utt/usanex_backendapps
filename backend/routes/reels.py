@@ -562,18 +562,16 @@ def get_reel_analytics_period(period: str, now: datetime):
     return None, "month", None
     
 
-
 @router.get("/me/analytics")
 def get_my_reels_analytics(
     period: str = Query("total"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    now = utc_now()
 
     start, bucket_type, bucket_count = get_reel_analytics_period(
-        period,
-        now,
+        period, now
     )
 
     reels_db = (
@@ -589,21 +587,233 @@ def get_my_reels_analytics(
 
     reel_ids = [reel.id for reel in reels_db]
 
-    total_views = sum(reel.views_count or 0 for reel in reels_db)
-    unique_viewers = sum(
-        reel.unique_views_count or 0 for reel in reels_db
-    )
-    total_likes = sum(reel.likes_count or 0 for reel in reels_db)
-    total_comments = sum(reel.comment_count or 0 for reel in reels_db)
-    total_shares = sum(reel.share_count or 0 for reel in reels_db)
-    total_completed = sum(
-        reel.completed_views_count or 0 for reel in reels_db
+    interactions = []
+    if reel_ids:
+        query = db.query(ReelInteraction).filter(
+            ReelInteraction.creator_id == current_user.id,
+            ReelInteraction.reel_id.in_(reel_ids),
+        )
+
+        if start is not None:
+            query = query.filter(
+                ReelInteraction.created_at >= start
+            )
+
+        interactions = query.order_by(
+            ReelInteraction.created_at.asc()
+        ).all()
+
+    # Period-wise metrics
+    views = [
+        item for item in interactions
+        if item.event_type in {"watch", "complete", "replay"}
+    ]
+
+    likes = sum(1 for item in interactions if item.event_type == "like")
+    unlikes = sum(1 for item in interactions if item.event_type == "unlike")
+    comments = sum(1 for item in interactions if item.event_type == "comment")
+    shares = sum(1 for item in interactions if item.event_type == "share")
+
+    total_views = len(views)
+    unique_viewers = len({item.user_id for item in views})
+    total_watch_time = sum(item.watch_time or 0 for item in views)
+    total_completed = sum(1 for item in views if item.completed)
+
+    completion_rate = (
+        round(total_completed / total_views * 100, 2)
+        if total_views else 0
     )
 
-    history_rows = []
-    if reel_ids:
-        history_rows = (
-            
+    # Graph bucket configuration
+    if period == "last_hour":
+        interval_seconds = 300
+        bucket_total = 12
+        bucket_starts = [
+            start + timedelta(seconds=i * interval_seconds)
+            for i in range(bucket_total)
+        ]
+        graph_bucket_type = "interval"
+
+    elif period == "last_24_hours":
+        interval_seconds = 3600
+        bucket_total = 24
+        bucket_starts = [
+            start + timedelta(hours=i)
+            for i in range(bucket_total)
+        ]
+        graph_bucket_type = "interval"
+
+    elif period in {"weekly", "monthly"}:
+        bucket_total = 7 if period == "weekly" else 30
+        bucket_starts = [
+            start + timedelta(days=i)
+            for i in range(bucket_total)
+        ]
+        graph_bucket_type = "interval"
+        interval_seconds = 86400
+
+    else:
+        if period == "six_months":
+            first_month = start.replace(day=1)
+            bucket_total = 6
+        else:
+            first_date = min(
+                [r.created_at for r in reels_db if r.created_at]
+                + [item.created_at for item in interactions]
+                + [now]
+            )
+            first_month = first_date.replace(day=1)
+            bucket_total = (
+                (now.year - first_month.year) * 12
+                + now.month - first_month.month
+                + 1
+            )
+
+        bucket_starts = []
+        for i in range(bucket_total):
+            month_number = first_month.month - 1 + i
+            year = first_month.year + month_number // 12
+            month = month_number % 12 + 1
+            bucket_starts.append(
+                first_month.replace(year=year, month=month)
+            )
+
+        graph_bucket_type = "month"
+
+    buckets = []
+
+    for bucket_start in bucket_starts:
+        if graph_bucket_type == "month":
+            label = bucket_start.strftime("%Y-%m")
+        elif period == "last_hour":
+            label = bucket_start.strftime("%H:%M")
+        elif period == "last_24_hours":
+            label = bucket_start.strftime("%d %b %H:00")
+        else:
+            label = bucket_start.strftime("%Y-%m-%d")
+
+        buckets.append({
+            "label": label,
+            "views": 0,
+            "likes": 0,
+            "unlikes": 0,
+            "comments": 0,
+            "shares": 0,
+            "watch_time": 0,
+        })
+
+    # Assign interactions to graph buckets
+    for item in interactions:
+        if graph_bucket_type == "month":
+            index = (
+                (item.created_at.year - bucket_starts[0].year) * 12
+                + item.created_at.month - bucket_starts[0].month
+            )
+        else:
+            elapsed = (
+                item.created_at - bucket_starts[0]
+            ).total_seconds()
+            index = int(elapsed // interval_seconds)
+
+        if index < 0 or index >= len(buckets):
+            continue
+
+        bucket = buckets[index]
+
+        if item.event_type in {"watch", "complete", "replay"}:
+            bucket["views"] += 1
+            bucket["watch_time"] += item.watch_time or 0
+        elif item.event_type == "like":
+            bucket["likes"] += 1
+        elif item.event_type == "unlike":
+            bucket["unlikes"] += 1
+        elif item.event_type == "comment":
+            bucket["comments"] += 1
+        elif item.event_type == "share":
+            bucket["shares"] += 1
+
+    for bucket in buckets:
+        bucket["watch_time"] = round(bucket["watch_time"], 2)
+
+    # Individual reel metrics for the selected period
+    reel_stats = {}
+
+    for item in interactions:
+        stats = reel_stats.setdefault(item.reel_id, {
+            "views": 0,
+            "unique_viewers": set(),
+            "likes": 0,
+            "comments": 0,
+            "shares": 0,
+            "watch_time": 0,
+            "completed": 0,
+        })
+
+        if item.event_type in {"watch", "complete", "replay"}:
+            stats["views"] += 1
+            stats["unique_viewers"].add(item.user_id)
+            stats["watch_time"] += item.watch_time or 0
+            if item.completed:
+                stats["completed"] += 1
+        elif item.event_type == "like":
+            stats["likes"] += 1
+        elif item.event_type == "comment":
+            stats["comments"] += 1
+        elif item.event_type == "share":
+            stats["shares"] += 1
+
+    individual_reels = []
+
+    for reel in reels_db:
+        stats = reel_stats.get(reel.id, {
+            "views": 0,
+            "unique_viewers": set(),
+            "likes": 0,
+            "comments": 0,
+            "shares": 0,
+            "watch_time": 0,
+            "completed": 0,
+        })
+
+        reel_views = stats["views"]
+
+        individual_reels.append({
+            "reel_id": reel.id,
+            "caption": reel.caption,
+            "thumbnail_url": reel.thumbnail_url,
+            "views": reel_views,
+            "unique_viewers": len(stats["unique_viewers"]),
+            "likes": stats["likes"],
+            "comments": stats["comments"],
+            "shares": stats["shares"],
+            "watch_time": round(stats["watch_time"], 2),
+            "completion_rate": round(
+                stats["completed"] / reel_views * 100, 2
+            ) if reel_views else 0,
+            "created_at": reel.created_at,
+        })
+
+    return {
+        "success": True,
+        "period": period,
+        "summary": {
+            "total_reels": len(reels_db),
+            "total_views": total_views,
+            "unique_viewers": unique_viewers,
+            "total_likes": likes,
+            "total_unlikes": unlikes,
+            "total_comments": comments,
+            "total_shares": shares,
+            "total_watch_time": round(total_watch_time, 2),
+            "completed_views": total_completed,
+            "completion_rate": completion_rate,
+        },
+        "graph": buckets,
+        "individual_reels": individual_reels,
+        }
+    
+
+
 
 
     
