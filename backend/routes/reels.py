@@ -1592,7 +1592,7 @@ async def delete_my_reel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-        reel = (
+            reel = (
         db.query(Reel)
         .filter(Reel.id == reel_id)
         .with_for_update()
@@ -1607,10 +1607,6 @@ async def delete_my_reel(
         or reel.visibility in {"deleting", "deleted"}
     ):
         raise HTTPException(status_code=404, detail="Reel not found")
-
-    if reel is None:
-        raise HTTPException(status_code=404, detail="Reel not found")
-
     if reel.user_id != current_user.id:
         raise HTTPException(
             status_code=403,
