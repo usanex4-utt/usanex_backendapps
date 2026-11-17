@@ -1683,9 +1683,13 @@ async def delete_my_reel(
             cloudinary_public_id,
             resource_type="video",
             invalidate=True,
+                result_status = (
+            result.get("result")
+            if isinstance(result, dict)
+            else None
         )
 
-                if result_status == "ok":
+        if result_status == "ok":
             pass
 
         elif result_status == "not found":
@@ -1705,8 +1709,6 @@ async def delete_my_reel(
             raise RuntimeError(
                 "Cloudinary deletion was not confirmed"
             )
-        if result_status not in {"ok", "not found"}:
-            raise RuntimeError("Cloudinary deletion was not confirmed")
 
     except Exception:
         # Restore the previous state if media deletion fails.
