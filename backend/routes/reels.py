@@ -1592,11 +1592,11 @@ async def delete_my_reel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-            reel = (
-        db.query(Reel)
-        .filter(Reel.id == reel_id)
-        .with_for_update()
-        .first()
+    reel = (
+      db.query(Reel)
+      .filter(Reel.id == reel_id)
+      .with_for_update()
+      .first()
     )
 
     if reel is None:
