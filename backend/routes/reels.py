@@ -1008,6 +1008,87 @@ def watch_reel(
     }
 
 
+
+# =========================================================
+# EDIT REEL METADATA
+# =========================================================
+
+@router.patch("/{reel_id}")
+async def update_my_reel(
+    reel_id: int,
+    payload: ReelUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = (
+        db.query(Reel)
+        .filter(Reel.id == reel_id)
+        .with_for_update()
+        .first()
+    )
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    if reel.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can edit only your own Reel",
+        )
+
+    if (
+        reel.status in {"deleting", "deleted"}
+        or reel.visibility in {"deleting", "deleted"}
+    ):
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    updates = payload.dict(exclude_unset=True)
+
+    if not updates:
+        raise HTTPException(
+            status_code=400,
+            detail="No changes provided",
+        )
+
+    allowed_fields = {"caption", "hashtags", "category", "language"}
+
+    for field, value in updates.items():
+        if field not in allowed_fields:
+            continue
+
+        if field == "caption":
+            value = normalize_optional_text(value, MAX_CAPTION_LENGTH)
+        elif field == "hashtags":
+            value = normalize_optional_text(value, MAX_HASHTAGS_LENGTH)
+        elif field == "category":
+            value = normalize_optional_text(value, 100)
+        elif field == "language":
+            value = normalize_optional_text(value, 50)
+
+        setattr(reel, field, value)
+
+    reel.updated_at = utc_now()
+
+    try:
+        db.commit()
+        db.refresh(reel)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update Reel",
+        )
+
+    await invalidate_feed_cache()
+
+    return {
+        "success": True,
+        "message": "Reel updated successfully",
+        "reel": serialize_reel(reel),
+    }
+    
+
+
 # =========================================================
 # LIKE / UNLIKE
 # =========================================================
