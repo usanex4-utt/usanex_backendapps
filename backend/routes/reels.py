@@ -1607,6 +1607,7 @@ async def delete_my_reel(
         or reel.visibility in {"deleting", "deleted"}
     ):
         raise HTTPException(status_code=404, detail="Reel not found")
+        
     if reel.user_id != current_user.id:
         raise HTTPException(
             status_code=403,
