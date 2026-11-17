@@ -1578,34 +1578,76 @@ async def delete_my_reel(
     current_user: User = Depends(get_current_user),
 ):
     reel = get_reel_or_404(db, reel_id)
+
     if reel.user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You can delete only your own reel")
+        raise HTTPException(
+            status_code=403,
+            detail="You can delete only your own reel",
+        )
 
     cloudinary_public_id = getattr(reel, "cloudinary_public_id", None)
-    cloudinary_delete_error = None
 
-    if cloudinary_public_id and cloudinary_ready():
-        try:
-            result = cloudinary.uploader.destroy(cloudinary_public_id, resource_type="video")
-            result_status = result.get("result") if isinstance(result, dict) else None
-            if result_status not in {"ok", "not found"}:
-                cloudinary_delete_error = result_status
-        except Exception as exc:
-            cloudinary_delete_error = str(exc)
+    if not cloudinary_public_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Cloudinary asset ID is missing. Reel was not deleted.",
+        )
+
+    if not cloudinary_ready():
+        raise HTTPException(
+            status_code=503,
+            detail="Cloudinary is not configured. Reel was not deleted.",
+        )
+
+    try:
+        result = cloudinary.uploader.destroy(
+            cloudinary_public_id,
+            resource_type="video",
+            invalidate=True,
+        )
+
+        result_status = (
+            result.get("result") if isinstance(result, dict) else None
+        )
+
+        if result_status not in {"ok", "not found"}:
+            raise HTTPException(
+                status_code=502,
+                detail="Cloudinary deletion failed. Reel was not marked deleted.",
+            )
+
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(
+            status_code=502,
+            detail="Cloudinary deletion failed. Please try again.",
+        )
 
     reel.visibility = "deleted"
     reel.status = "deleted"
     reel.updated_at = utc_now()
-    db.commit()
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Media deleted, but database update failed. Admin review required.",
+        )
 
     await invalidate_feed_cache()
 
     return {
         "success": True,
-        "message": "Reel deleted successfully",
-        "cloudinary_deleted": cloudinary_delete_error is None,
+        "message": "Reel permanently deleted",
+        "cloudinary_deleted": True,
+        "record_preserved": True,
     }
     
+
+
 
 # =========================================================
 # STATUS / AI STATUS
