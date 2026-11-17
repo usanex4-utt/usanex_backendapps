@@ -589,14 +589,41 @@ async def get_reels_feed(
     offset = cursor or 0
     cache_key = f"usanex:reels:feed:{current_user.id}:{limit}:{offset}"
 
-    try:
-        cached = await get_redis().get(cache_key)
-        if cached:
-            if isinstance(cached, bytes):
-                cached = cached.decode("utf-8")
-            return json.loads(cached)
-    except Exception:
-        pass
+        try:
+          cached = await get_redis().get(cache_key)
+          if cached:
+             if isinstance(cached, bytes):
+                 cached = cached.decode("utf-8")
+
+             cached_response = json.loads(cached)
+             cached_reels = cached_response.get("reels", [])
+
+             cached_reel_ids = [
+               item.get("id")
+               for item in cached_reels
+               if item.get("id") is not None
+             ]
+
+             if cached_reel_ids:
+                 valid_reel_ids = {
+                   row[0]
+                   for row in db.query(Reel.id).filter(
+                       Reel.id.in_(cached_reel_ids),
+                       Reel.status == "published",
+                       Reel.visibility == "public",
+                       Reel.is_safe.is_(True),
+                   ).all()
+                 }
+
+                 cached_response["reels"] = [
+                   item for item in cached_reels
+                   if item.get("id") in valid_reel_ids
+                 ]
+
+               cached_response["count"] = len(cached_response["reels"])
+               return cached_response
+           except Exception:
+             pass
 
     reels_db = get_recommended_reels(
         db=db,
