@@ -1597,6 +1597,11 @@ async def delete_my_reel(
         .filter(Reel.id == reel_id)
         .with_for_update()
         .first()
+        if (
+    reel.status in {"deleting", "deleted"}
+    or reel.visibility in {"deleting", "deleted"}
+):
+    raise HTTPException(status_code=404, detail="Reel not found")
     )
 
     if reel is None:
