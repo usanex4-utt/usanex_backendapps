@@ -1516,6 +1516,7 @@ def delete_comment(
     current_user: User = Depends(get_current_user),
 ):
     reel = get_reel_or_404(db, reel_id)
+    ensure_reel_access(db, reel, current_user)
     comment = db.query(ReelComment).filter(
         ReelComment.id == comment_id,
         ReelComment.reel_id == reel_id,
