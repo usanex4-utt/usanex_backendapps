@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 import cloudinary
 import cloudinary.uploader
+import cloudinary.api
+import cloudinary.exceptions
 import cloudinary.utils
 
 from fastapi import (
@@ -1683,10 +1685,26 @@ async def delete_my_reel(
             invalidate=True,
         )
 
-        result_status = (
-            result.get("result") if isinstance(result, dict) else None
-        )
+                if result_status == "ok":
+            pass
 
+        elif result_status == "not found":
+            try:
+                cloudinary.api.resource(
+                    cloudinary_public_id,
+                    resource_type="video",
+                )
+            except cloudinary.exceptions.NotFound:
+                pass
+            else:
+                raise RuntimeError(
+                    "Cloudinary asset still exists"
+                )
+
+        else:
+            raise RuntimeError(
+                "Cloudinary deletion was not confirmed"
+            )
         if result_status not in {"ok", "not found"}:
             raise RuntimeError("Cloudinary deletion was not confirmed")
 
