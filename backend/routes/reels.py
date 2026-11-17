@@ -642,7 +642,11 @@ def get_my_reels(
 ):
     reels_db = (
         db.query(Reel)
-        .filter(Reel.user_id == current_user.id)
+        .filter(
+            Reel.user_id == current_user.id,
+            Reel.status.notin_(["deleting", "deleted"]),
+            Reel.visibility.notin_(["deleting", "deleted"]),
+        )
         .order_by(Reel.id.desc())
         .offset(offset)
         .limit(limit)
