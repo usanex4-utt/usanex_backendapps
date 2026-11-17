@@ -442,8 +442,13 @@ def get_reel_or_404(db: Session, reel_id: int) -> Reel:
 def get_creator(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
 
-
 def ensure_reel_access(db: Session, reel: Reel, current_user: User) -> None:
+    if (
+        reel.status in {"deleting", "deleted"}
+        or reel.visibility in {"deleting", "deleted"}
+    ):
+        raise HTTPException(status_code=404, detail="Reel not found")
+
     if reel.user_id == current_user.id:
         return
 
