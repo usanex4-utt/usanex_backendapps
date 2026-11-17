@@ -1591,7 +1591,15 @@ async def delete_my_reel(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    reel = get_reel_or_404(db, reel_id)
+    reel = (
+        db.query(Reel)
+        .filter(Reel.id == reel_id)
+        .with_for_update()
+        .first()
+    )
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
 
     if reel.user_id != current_user.id:
         raise HTTPException(
@@ -1613,6 +1621,26 @@ async def delete_my_reel(
             detail="Cloudinary is not configured. Reel was not deleted.",
         )
 
+    previous_status = reel.status
+    previous_visibility = reel.visibility
+
+    # Phase 1: Hide the Reel before deleting its media.
+    reel.status = "deleting"
+    reel.visibility = "deleting"
+    reel.updated_at = utc_now()
+
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not hide Reel. Media was not deleted.",
+        )
+
+    await invalidate_feed_cache()
+
+    # Phase 2: Permanently delete the Cloudinary media.
     try:
         result = cloudinary.uploader.destroy(
             cloudinary_public_id,
@@ -1625,30 +1653,52 @@ async def delete_my_reel(
         )
 
         if result_status not in {"ok", "not found"}:
-            raise HTTPException(
-                status_code=502,
-                detail="Cloudinary deletion failed. Reel was not marked deleted.",
+            raise RuntimeError("Cloudinary deletion was not confirmed")
+
+    except Exception:
+        # Restore the previous state if media deletion fails.
+        try:
+            db.rollback()
+            current_reel = (
+                db.query(Reel)
+                .filter(Reel.id == reel_id)
+                .with_for_update()
+                .first()
             )
 
-    except HTTPException:
-        raise
-    except Exception:
+            if (
+                current_reel
+                and current_reel.status == "deleting"
+                and current_reel.visibility == "deleting"
+            ):
+                current_reel.status = previous_status
+                current_reel.visibility = previous_visibility
+                current_reel.updated_at = utc_now()
+                db.commit()
+        except Exception:
+            db.rollback()
+            # Keep the Reel hidden in deleting state for admin review.
+
+        await invalidate_feed_cache()
+
         raise HTTPException(
             status_code=502,
-            detail="Cloudinary deletion failed. Please try again.",
+            detail="Cloudinary deletion failed. Please retry or contact admin.",
         )
 
-    reel.visibility = "deleted"
+    # Phase 3: Mark permanently deleted.
     reel.status = "deleted"
+    reel.visibility = "deleted"
     reel.updated_at = utc_now()
 
     try:
         db.commit()
     except Exception:
         db.rollback()
+        await invalidate_feed_cache()
         raise HTTPException(
             status_code=500,
-            detail="Media deleted, but database update failed. Admin review required.",
+            detail="Media deleted. Reel remains hidden for admin review.",
         )
 
     await invalidate_feed_cache()
@@ -1658,7 +1708,9 @@ async def delete_my_reel(
         "message": "Reel permanently deleted",
         "cloudinary_deleted": True,
         "record_preserved": True,
-    }
+            }
+    
+
     
 
 
