@@ -721,14 +721,19 @@ def get_saved_reels(
     current_user: User = Depends(get_current_user),
 ):
     rows = (
-        db.query(ReelSave)
-        .filter(ReelSave.user_id == current_user.id)
-        .order_by(ReelSave.created_at.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
-    )
-
+      db.query(ReelSave)
+      .join(Reel, Reel.id == ReelSave.reel_id)
+      .filter(
+          ReelSave.user_id == current_user.id,
+          Reel.status.notin_(["deleting", "deleted"]),
+          Reel.visibility.notin_(["deleting", "deleted"]),
+      )
+      .order_by(ReelSave.created_at.desc())
+      .offset(offset)
+      .limit(limit)
+      .all()
+  )
+     
     reel_ids = [row.reel_id for row in rows]
     reels_db: list[Reel] = []
     if reel_ids:
