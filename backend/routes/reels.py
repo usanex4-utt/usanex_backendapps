@@ -1084,7 +1084,10 @@ async def update_my_reel(
     return {
         "success": True,
         "message": "Reel updated successfully",
-        "reel": serialize_reel(reel),
+        "reel": serialize_reel_for_viewer(
+           db, reel, current_user.id
+         ),
+        
     }
     
 
