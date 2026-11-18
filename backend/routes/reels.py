@@ -1664,15 +1664,68 @@ def get_reel_analytics(
         .all()
     )
 
-    labels = [
-        row.time_bucket.isoformat()
+    
+    # Fill missing graph intervals with zero values
+    event_map_by_bucket = {
+        row.time_bucket: int(row.event_count or 0)
         for row in graph_rows
-    ]
+    }
 
-    values = [
-        int(row.event_count or 0)
-        for row in graph_rows
-    ]
+    if period == "hour":
+        step = timedelta(minutes=1)
+        cursor = start_time.replace(second=0, microsecond=0)
+        end_bucket = now.replace(second=0, microsecond=0)
+
+    elif period == "24_hours":
+        step = timedelta(hours=1)
+        cursor = start_time.replace(minute=0, second=0, microsecond=0)
+        end_bucket = now.replace(minute=0, second=0, microsecond=0)
+
+    elif period in ("weekly", "monthly"):
+        step = timedelta(days=1)
+        cursor = start_time.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    else:
+        step = None
+
+    labels = []
+    values = []
+
+    if period == "total":
+        if graph_rows:
+            cursor = graph_rows[0].time_bucket
+            end_bucket = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    if period in ("6_months", "total"):
+        if period == "6_months":
+            cursor = start_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        if period == "6_months" or graph_rows:
+            while cursor <= end_bucket:
+                count = event_map_by_bucket.get(cursor, 0)
+                labels.append(cursor.isoformat())
+                values.append(count)
+
+                if cursor.month == 12:
+                    cursor = cursor.replace(
+                        year=cursor.year + 1,
+                        month=1
+                    )
+                else:
+                    cursor = cursor.replace(
+                        month=cursor.month + 1
+                    )
+
+    elif period != "total":
+        while cursor <= end_bucket:
+            count = event_map_by_bucket.get(cursor, 0)
+            labels.append(cursor.isoformat())
+            values.append(count)
+            cursor += step
+            
+
+    
 
     return {
         "success": True,
