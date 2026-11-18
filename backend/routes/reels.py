@@ -1518,10 +1518,24 @@ def get_reel_analytics(
 
     days = period_days[period]
 
-    start_time = (
-        now - timedelta(days=days)
-        if days is not None else None
+    
+start_time = (
+    now - timedelta(days=days)
+    if days is not None else None
+)
+
+# Keep 6-month summary and graph on the same calendar range
+if period == "6_months":
+    month_index = now.year * 12 + now.month - 1 - 5
+    start_year = month_index // 12
+    start_month = month_index % 12 + 1
+
+    start_time = datetime(
+        start_year,
+        start_month,
+        1
     )
+    
 
     # Only this creator's valid reels
     valid_reels = (
