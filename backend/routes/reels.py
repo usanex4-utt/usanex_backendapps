@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -25,7 +25,7 @@ from fastapi import (
 )
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, case
 
 from ..core.redis_client import get_redis
 from ..database.database import get_db
@@ -1468,6 +1468,226 @@ def mark_not_interested(
     current_user: User = Depends(get_current_user),
 ):
     return _set_reel_interest(reel_id, False, db, current_user)
+
+
+
+# =========================================================
+# REEL ANALYSIS - READ ONLY ANALYTICS API
+# =========================================================
+
+@router.get("/analytics")
+def get_reel_analytics(
+    period: str = Query("24_hours"),
+    metric: str = Query("views"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Validate parameters
+    valid_periods = {
+        "hour", "24_hours", "weekly",
+        "monthly", "6_months", "total"
+    }
+
+    valid_metrics = {
+        "views", "likes", "comments",
+        "interested", "not_interested"
+    }
+
+    if period not in valid_periods:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid analytics period"
+        )
+
+    if metric not in valid_metrics:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid analytics metric"
+        )
+
+    now = utc_now()
+
+    period_days = {
+        "hour": 1 / 24,
+        "24_hours": 1,
+        "weekly": 7,
+        "monthly": 30,
+        "6_months": 183,
+        "total": None,
+    }
+
+    days = period_days[period]
+
+    start_time = (
+        now - timedelta(days=days)
+        if days is not None else None
+    )
+
+    # Only this creator's valid reels
+    valid_reels = (
+        db.query(Reel.id)
+        .filter(
+            Reel.user_id == current_user.id,
+            Reel.status.notin_(["deleting", "deleted"]),
+            Reel.visibility.notin_(["deleting", "deleted"]),
+        )
+        .subquery()
+    )
+
+    # Creator's interaction history
+    query = db.query(ReelInteraction).filter(
+        ReelInteraction.creator_id == current_user.id,
+        ReelInteraction.reel_id.in_(valid_reels),
+        ReelInteraction.created_at <= now,
+    )
+
+    if start_time is not None:
+        query = query.filter(
+            ReelInteraction.created_at >= start_time
+        )
+
+    # Summary counts
+    summary_row = query.with_entities(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ReelInteraction.event_type.in_(
+                            ["watch", "complete", "replay"]
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ), 0
+        ).label("views"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (ReelInteraction.event_type == "like", 1),
+                    else_=0,
+                )
+            ), 0
+        ).label("likes"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (ReelInteraction.event_type == "comment", 1),
+                    else_=0,
+                )
+            ), 0
+        ).label("comments"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (ReelInteraction.event_type == "interested", 1),
+                    else_=0,
+                )
+            ), 0
+        ).label("interested"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ReelInteraction.event_type == "not_interested",
+                        1,
+                    ),
+                    else_=0,
+                )
+            ), 0
+        ).label("not_interested"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ReelInteraction.event_type.in_(
+                            ["watch", "complete", "replay"]
+                        ),
+                        ReelInteraction.watch_time,
+                    ),
+                    else_=0,
+                )
+            ), 0
+        ).label("total_watch_time"),
+
+    ).first()
+
+    summary = {
+        "views": int(summary_row.views or 0),
+        "likes": int(summary_row.likes or 0),
+        "comments": int(summary_row.comments or 0),
+        "interested": int(summary_row.interested or 0),
+        "not_interested": int(summary_row.not_interested or 0),
+        "total_watch_time_seconds": round(
+            float(summary_row.total_watch_time or 0), 2
+        ),
+    }
+
+    # Graph grouping
+    if period == "hour":
+        bucket = "minute"
+    elif period == "24_hours":
+        bucket = "hour"
+    elif period in ("weekly", "monthly"):
+        bucket = "day"
+    else:
+        bucket = "month"
+
+    event_map = {
+        "views": ["watch", "complete", "replay"],
+        "likes": ["like"],
+        "comments": ["comment"],
+        "interested": ["interested"],
+        "not_interested": ["not_interested"],
+    }
+
+    bucket_expression = func.date_trunc(
+        bucket, ReelInteraction.created_at
+    )
+
+    graph_rows = (
+        query
+        .filter(
+            ReelInteraction.event_type.in_(event_map[metric])
+        )
+        .with_entities(
+            bucket_expression.label("time_bucket"),
+            func.count(ReelInteraction.id).label("event_count"),
+        )
+        .group_by(bucket_expression)
+        .order_by(bucket_expression)
+        .all()
+    )
+
+    labels = [
+        row.time_bucket.isoformat()
+        for row in graph_rows
+    ]
+
+    values = [
+        int(row.event_count or 0)
+        for row in graph_rows
+    ]
+
+    return {
+        "success": True,
+        "period": period,
+        "summary": summary,
+        "graph": {
+            "metric": metric,
+            "labels": labels,
+            "values": values,
+        },
+    }
+
+
+# LIST ENDPOINTS
+
 
 
 # =========================================================
