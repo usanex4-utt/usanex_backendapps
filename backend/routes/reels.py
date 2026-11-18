@@ -925,6 +925,296 @@ async def upload_reel(
         except Exception:
             pass
 
+# =========================================================
+# REEL ANALYSIS - READ ONLY ANALYTICS API
+# =========================================================
+
+@router.get("/analytics")
+def get_reel_analytics(
+    period: str = Query("24_hours"),
+    metric: str = Query("views"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    # Validate parameters
+    valid_periods = {
+        "hour", "24_hours", "weekly",
+        "monthly", "6_months", "total"
+    }
+
+    valid_metrics = {
+        "views", "likes", "comments",
+        "interested", "not_interested"
+    }
+
+    if period not in valid_periods:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid analytics period"
+        )
+
+    if metric not in valid_metrics:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid analytics metric"
+        )
+
+    now = utc_now()
+
+    period_days = {
+        "hour": 1 / 24,
+        "24_hours": 1,
+        "weekly": 7,
+        "monthly": 30,
+        "6_months": 183,
+        "total": None,
+    }
+
+    days = period_days[period]
+
+    
+    start_time = (
+        now - timedelta(days=days)
+        if days is not None else None
+    )
+
+# Keep 6-month summary and graph on the same calendar range
+    if period == "6_months":
+        month_index = now.year * 12 + now.month - 1 - 5
+        start_year = month_index // 12
+        start_month = month_index % 12 + 1
+
+        start_time = datetime(
+            start_year,
+            start_month,
+            1
+        )
+    
+
+    # Only this creator's valid reels
+    valid_reels = (
+        db.query(Reel.id)
+        .filter(
+            Reel.user_id == current_user.id,
+            Reel.status.notin_(["deleting", "deleted"]),
+            Reel.visibility.notin_(["deleting", "deleted"]),
+        )
+        .subquery()
+    )
+
+    # Creator's interaction history
+    query = db.query(ReelInteraction).filter(
+        ReelInteraction.creator_id == current_user.id,
+        ReelInteraction.reel_id.in_(valid_reels),
+        ReelInteraction.created_at <= now,
+    )
+
+    if start_time is not None:
+        query = query.filter(
+            ReelInteraction.created_at >= start_time
+        )
+
+    # Summary counts
+    summary_row = query.with_entities(
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ReelInteraction.event_type.in_(
+                            ["watch", "complete", "replay"]
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ), 0
+        ).label("views"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (ReelInteraction.event_type == "like", 1),
+                    else_=0,
+                )
+            ), 0
+        ).label("likes"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (ReelInteraction.event_type == "comment", 1),
+                    else_=0,
+                )
+            ), 0
+        ).label("comments"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (ReelInteraction.event_type == "interested", 1),
+                    else_=0,
+                )
+            ), 0
+        ).label("interested"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ReelInteraction.event_type == "not_interested",
+                        1,
+                    ),
+                    else_=0,
+                )
+            ), 0
+        ).label("not_interested"),
+
+        func.coalesce(
+            func.sum(
+                case(
+                    (
+                        ReelInteraction.event_type.in_(
+                            ["watch", "complete", "replay"]
+                        ),
+                        ReelInteraction.watch_time,
+                    ),
+                    else_=0,
+                )
+            ), 0
+        ).label("total_watch_time"),
+
+    ).first()
+
+    summary = {
+        "views": int(summary_row.views or 0),
+        "likes": int(summary_row.likes or 0),
+        "comments": int(summary_row.comments or 0),
+        "interested": int(summary_row.interested or 0),
+        "not_interested": int(summary_row.not_interested or 0),
+        "total_watch_time_seconds": round(
+            float(summary_row.total_watch_time or 0), 2
+        ),
+    }
+
+    # Graph grouping
+    if period == "hour":
+        bucket = "minute"
+    elif period == "24_hours":
+        bucket = "hour"
+    elif period in ("weekly", "monthly"):
+        bucket = "day"
+    else:
+        bucket = "month"
+
+    event_map = {
+        "views": ["watch", "complete", "replay"],
+        "likes": ["like"],
+        "comments": ["comment"],
+        "interested": ["interested"],
+        "not_interested": ["not_interested"],
+    }
+
+    bucket_expression = func.date_trunc(
+        bucket, ReelInteraction.created_at
+    )
+
+    graph_rows = (
+        query
+        .filter(
+            ReelInteraction.event_type.in_(event_map[metric])
+        )
+        .with_entities(
+            bucket_expression.label("time_bucket"),
+            func.count(ReelInteraction.id).label("event_count"),
+        )
+        .group_by(bucket_expression)
+        .order_by(bucket_expression)
+        .all()
+    )
+
+    
+    # Fill missing graph intervals with zero values
+    event_map_by_bucket = {
+        row.time_bucket: int(row.event_count or 0)
+        for row in graph_rows
+    }
+
+    labels = []
+    values = []
+
+    if period == "hour":
+        step = timedelta(minutes=1)
+        end_bucket = now.replace(second=0, microsecond=0)
+        cursor = end_bucket - timedelta(minutes=59)
+
+    elif period == "24_hours":
+        step = timedelta(hours=1)
+        end_bucket = now.replace(minute=0, second=0, microsecond=0)
+        cursor = end_bucket - timedelta(hours=23)
+
+    elif period == "weekly":
+        step = timedelta(days=1)
+        end_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        cursor = end_bucket - timedelta(days=6)
+
+    elif period == "monthly":
+        step = timedelta(days=1)
+        end_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        cursor = end_bucket - timedelta(days=29)
+
+    else:
+        step = None
+
+    if period in ("hour", "24_hours", "weekly", "monthly"):
+        while cursor <= end_bucket:
+            labels.append(cursor.isoformat())
+            values.append(event_map_by_bucket.get(cursor, 0))
+            cursor += step
+
+    elif period in ("6_months", "total"):
+        end_bucket = now.replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0
+        )
+
+        if period == "6_months":
+            month_index = now.year * 12 + now.month - 1 - 5
+            year = month_index // 12
+            month = month_index % 12 + 1
+            cursor = datetime(year, month, 1)
+
+        elif graph_rows:
+            cursor = graph_rows[0].time_bucket
+
+        else:
+            cursor = None
+
+        while cursor is not None and cursor <= end_bucket:
+            labels.append(cursor.isoformat())
+            values.append(event_map_by_bucket.get(cursor, 0))
+
+            if cursor.month == 12:
+                cursor = cursor.replace(year=cursor.year + 1, month=1)
+            else:
+                cursor = cursor.replace(month=cursor.month + 1)
+            
+            
+
+    
+
+    return {
+        "success": True,
+        "period": period,
+        "summary": summary,
+        "graph": {
+            "metric": metric,
+            "labels": labels,
+            "values": values,
+        },
+    }
+
+
+# LIST ENDPOINTS
+
 
 # =========================================================
 # SINGLE REEL
@@ -1468,298 +1758,6 @@ def mark_not_interested(
     current_user: User = Depends(get_current_user),
 ):
     return _set_reel_interest(reel_id, False, db, current_user)
-
-
-
-# =========================================================
-# REEL ANALYSIS - READ ONLY ANALYTICS API
-# =========================================================
-
-@router.get("/analytics")
-def get_reel_analytics(
-    period: str = Query("24_hours"),
-    metric: str = Query("views"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    # Validate parameters
-    valid_periods = {
-        "hour", "24_hours", "weekly",
-        "monthly", "6_months", "total"
-    }
-
-    valid_metrics = {
-        "views", "likes", "comments",
-        "interested", "not_interested"
-    }
-
-    if period not in valid_periods:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid analytics period"
-        )
-
-    if metric not in valid_metrics:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid analytics metric"
-        )
-
-    now = utc_now()
-
-    period_days = {
-        "hour": 1 / 24,
-        "24_hours": 1,
-        "weekly": 7,
-        "monthly": 30,
-        "6_months": 183,
-        "total": None,
-    }
-
-    days = period_days[period]
-
-    
-    start_time = (
-        now - timedelta(days=days)
-        if days is not None else None
-    )
-
-# Keep 6-month summary and graph on the same calendar range
-    if period == "6_months":
-        month_index = now.year * 12 + now.month - 1 - 5
-        start_year = month_index // 12
-        start_month = month_index % 12 + 1
-
-        start_time = datetime(
-            start_year,
-            start_month,
-            1
-        )
-    
-
-    # Only this creator's valid reels
-    valid_reels = (
-        db.query(Reel.id)
-        .filter(
-            Reel.user_id == current_user.id,
-            Reel.status.notin_(["deleting", "deleted"]),
-            Reel.visibility.notin_(["deleting", "deleted"]),
-        )
-        .subquery()
-    )
-
-    # Creator's interaction history
-    query = db.query(ReelInteraction).filter(
-        ReelInteraction.creator_id == current_user.id,
-        ReelInteraction.reel_id.in_(valid_reels),
-        ReelInteraction.created_at <= now,
-    )
-
-    if start_time is not None:
-        query = query.filter(
-            ReelInteraction.created_at >= start_time
-        )
-
-    # Summary counts
-    summary_row = query.with_entities(
-        func.coalesce(
-            func.sum(
-                case(
-                    (
-                        ReelInteraction.event_type.in_(
-                            ["watch", "complete", "replay"]
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ), 0
-        ).label("views"),
-
-        func.coalesce(
-            func.sum(
-                case(
-                    (ReelInteraction.event_type == "like", 1),
-                    else_=0,
-                )
-            ), 0
-        ).label("likes"),
-
-        func.coalesce(
-            func.sum(
-                case(
-                    (ReelInteraction.event_type == "comment", 1),
-                    else_=0,
-                )
-            ), 0
-        ).label("comments"),
-
-        func.coalesce(
-            func.sum(
-                case(
-                    (ReelInteraction.event_type == "interested", 1),
-                    else_=0,
-                )
-            ), 0
-        ).label("interested"),
-
-        func.coalesce(
-            func.sum(
-                case(
-                    (
-                        ReelInteraction.event_type == "not_interested",
-                        1,
-                    ),
-                    else_=0,
-                )
-            ), 0
-        ).label("not_interested"),
-
-        func.coalesce(
-            func.sum(
-                case(
-                    (
-                        ReelInteraction.event_type.in_(
-                            ["watch", "complete", "replay"]
-                        ),
-                        ReelInteraction.watch_time,
-                    ),
-                    else_=0,
-                )
-            ), 0
-        ).label("total_watch_time"),
-
-    ).first()
-
-    summary = {
-        "views": int(summary_row.views or 0),
-        "likes": int(summary_row.likes or 0),
-        "comments": int(summary_row.comments or 0),
-        "interested": int(summary_row.interested or 0),
-        "not_interested": int(summary_row.not_interested or 0),
-        "total_watch_time_seconds": round(
-            float(summary_row.total_watch_time or 0), 2
-        ),
-    }
-
-    # Graph grouping
-    if period == "hour":
-        bucket = "minute"
-    elif period == "24_hours":
-        bucket = "hour"
-    elif period in ("weekly", "monthly"):
-        bucket = "day"
-    else:
-        bucket = "month"
-
-    event_map = {
-        "views": ["watch", "complete", "replay"],
-        "likes": ["like"],
-        "comments": ["comment"],
-        "interested": ["interested"],
-        "not_interested": ["not_interested"],
-    }
-
-    bucket_expression = func.date_trunc(
-        bucket, ReelInteraction.created_at
-    )
-
-    graph_rows = (
-        query
-        .filter(
-            ReelInteraction.event_type.in_(event_map[metric])
-        )
-        .with_entities(
-            bucket_expression.label("time_bucket"),
-            func.count(ReelInteraction.id).label("event_count"),
-        )
-        .group_by(bucket_expression)
-        .order_by(bucket_expression)
-        .all()
-    )
-
-    
-    # Fill missing graph intervals with zero values
-    event_map_by_bucket = {
-        row.time_bucket: int(row.event_count or 0)
-        for row in graph_rows
-    }
-
-    labels = []
-    values = []
-
-    if period == "hour":
-        step = timedelta(minutes=1)
-        end_bucket = now.replace(second=0, microsecond=0)
-        cursor = end_bucket - timedelta(minutes=59)
-
-    elif period == "24_hours":
-        step = timedelta(hours=1)
-        end_bucket = now.replace(minute=0, second=0, microsecond=0)
-        cursor = end_bucket - timedelta(hours=23)
-
-    elif period == "weekly":
-        step = timedelta(days=1)
-        end_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        cursor = end_bucket - timedelta(days=6)
-
-    elif period == "monthly":
-        step = timedelta(days=1)
-        end_bucket = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        cursor = end_bucket - timedelta(days=29)
-
-    else:
-        step = None
-
-    if period in ("hour", "24_hours", "weekly", "monthly"):
-        while cursor <= end_bucket:
-            labels.append(cursor.isoformat())
-            values.append(event_map_by_bucket.get(cursor, 0))
-            cursor += step
-
-    elif period in ("6_months", "total"):
-        end_bucket = now.replace(
-            day=1, hour=0, minute=0, second=0, microsecond=0
-        )
-
-        if period == "6_months":
-            month_index = now.year * 12 + now.month - 1 - 5
-            year = month_index // 12
-            month = month_index % 12 + 1
-            cursor = datetime(year, month, 1)
-
-        elif graph_rows:
-            cursor = graph_rows[0].time_bucket
-
-        else:
-            cursor = None
-
-        while cursor is not None and cursor <= end_bucket:
-            labels.append(cursor.isoformat())
-            values.append(event_map_by_bucket.get(cursor, 0))
-
-            if cursor.month == 12:
-                cursor = cursor.replace(year=cursor.year + 1, month=1)
-            else:
-                cursor = cursor.replace(month=cursor.month + 1)
-            
-            
-
-    
-
-    return {
-        "success": True,
-        "period": period,
-        "summary": summary,
-        "graph": {
-            "metric": metric,
-            "labels": labels,
-            "values": values,
-        },
-    }
-
-
-# LIST ENDPOINTS
 
 
 
