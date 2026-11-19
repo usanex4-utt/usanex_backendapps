@@ -328,9 +328,9 @@ def build_profile_response(
         target_user.id,
     )
 
-        reels_count, videos_count = get_user_reel_video_counts(
-        db,
-        target_user.id,
+    reels_count, videos_count = get_user_reel_video_counts(
+              db,
+              target_user.id,
     )
 
     total_posts_count = len(posts) + reels_count + videos_count
