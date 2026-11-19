@@ -696,6 +696,8 @@ def get_my_reels(
 
 
 # =========================================================
+
+# ======================================================
 # REPOST / UNDO REPOST
 # =========================================================
 
@@ -705,29 +707,45 @@ async def toggle_reel_repost(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    reel = get_reel_or_404(db, reel_id)
+    reel = (
+        db.query(Reel)
+        .filter(Reel.id == reel_id)
+        .with_for_update()
+        .first()
+    )
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
     ensure_reel_access(db, reel, current_user)
 
-    existing_repost = db.query(ReelRepost).filter(
-        ReelRepost.user_id == current_user.id,
-        ReelRepost.reel_id == reel.id,
-    ).first()
+    try:
+        existing_repost = db.query(ReelRepost).filter(
+            ReelRepost.user_id == current_user.id,
+            ReelRepost.reel_id == reel.id,
+        ).first()
 
-    if existing_repost:
-        db.delete(existing_repost)
-        is_reposted = False
-        message = "Repost removed"
-    else:
-        repost = ReelRepost(
-            user_id=current_user.id,
-            reel_id=reel.id,
-            created_at=utc_now(),
+        if existing_repost:
+            db.delete(existing_repost)
+            is_reposted = False
+            message = "Repost removed"
+        else:
+            db.add(ReelRepost(
+                user_id=current_user.id,
+                reel_id=reel.id,
+                created_at=utc_now(),
+            ))
+            is_reposted = True
+            message = "Reel reposted successfully"
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Repost could not be processed. Please try again."
         )
-        db.add(repost)
-        is_reposted = True
-        message = "Reel reposted successfully"
-
-    db.commit()
 
     repost_count = db.query(func.count(ReelRepost.id)).filter(
         ReelRepost.reel_id == reel.id
@@ -742,6 +760,7 @@ async def toggle_reel_repost(
         "is_reposted": is_reposted,
         "repost_count": int(repost_count),
     }
+    
     
 
 
