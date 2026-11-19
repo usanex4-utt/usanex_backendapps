@@ -661,6 +661,80 @@ async def get_reels_feed(
     return response
 
 
+
+# =========================================================
+# FOLLOWING USERS REPOSTS FEED
+# =========================================================
+
+@router.get("/feed/reposts")
+def get_following_reposts_feed(
+    limit: int = Query(10, ge=1, le=50),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    rows = (
+        db.query(ReelRepost, Reel, User)
+        .join(Reel, Reel.id == ReelRepost.reel_id)
+        .join(User, User.id == ReelRepost.user_id)
+        .join(
+            UserFollow,
+            UserFollow.following_id == ReelRepost.user_id,
+        )
+        .filter(
+            UserFollow.follower_id == current_user.id,
+            Reel.status == "published",
+            Reel.visibility == "public",
+            Reel.is_safe.is_(True),
+        )
+        .order_by(
+            ReelRepost.created_at.desc(),
+            ReelRepost.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    reposts = []
+
+    for repost, reel, reposter in rows:
+        original_creator = get_creator(db, reel.user_id)
+
+        if not can_view_profile_content(db, current_user, reposter):
+            continue
+
+        if not can_view_profile_content(
+            db, current_user, original_creator
+        ):
+            continue
+
+        reel_data = serialize_reel_for_viewer(
+            db,
+            reel,
+            current_user.id,
+            original_creator,
+        )
+
+        reel_data["is_repost"] = True
+        reel_data["reposted_at"] = (
+            repost.created_at.isoformat()
+            if repost.created_at else None
+        )
+        reel_data["reposted_by"] = serialize_user(reposter)
+
+        reposts.append(reel_data)
+
+    return {
+        "success": True,
+        "reposts": reposts,
+        "count": len(reposts),
+        "limit": limit,
+        "offset": offset,
+    }
+    
+
+
 # =========================================================
 # LIST ENDPOINTS
 # =========================================================
