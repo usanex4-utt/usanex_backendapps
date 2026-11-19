@@ -345,6 +345,8 @@ def enrich_reels_for_viewer(
     liked_ids: set[int] = set()
     saved_ids: set[int] = set()
     following_ids: set[int] = set()
+    reposted_ids: set[int] = set()
+    repost_counts: dict[int, int] = {}
 
     if reel_ids:
         liked_ids = {
