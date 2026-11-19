@@ -365,13 +365,13 @@ def enrich_reels_for_viewer(
         }
 
 
-            reposted_ids = {
-            row[0]
-            for row in db.query(ReelRepost.reel_id).filter(
-                ReelRepost.user_id == viewer_id,
-                ReelRepost.reel_id.in_(reel_ids),
-            ).all()
-        }
+        reposted_ids = {
+          row[0]
+          for row in db.query(ReelRepost.reel_id).filter(
+             ReelRepost.user_id == viewer_id,
+             ReelRepost.reel_id.in_(reel_ids),
+           ).all()
+         }
 
         repost_counts = {
             row[0]: int(row[1] or 0)
