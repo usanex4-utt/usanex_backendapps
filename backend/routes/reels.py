@@ -38,6 +38,7 @@ from ..database.models import (
     ReelCommentLike,
     ReelReport,
     ReelSave,
+    ReelRepost,
     ReelDownload,
     ReelShare,
     ReelLike,
@@ -692,6 +693,56 @@ def get_my_reels(
         "count": len(reels),
         "owner": serialize_user(current_user),
     }
+
+
+# =========================================================
+# REPOST / UNDO REPOST
+# =========================================================
+
+@router.post("/{reel_id}/repost")
+async def toggle_reel_repost(
+    reel_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = get_reel_or_404(db, reel_id)
+    ensure_reel_access(db, reel, current_user)
+
+    existing_repost = db.query(ReelRepost).filter(
+        ReelRepost.user_id == current_user.id,
+        ReelRepost.reel_id == reel.id,
+    ).first()
+
+    if existing_repost:
+        db.delete(existing_repost)
+        is_reposted = False
+        message = "Repost removed"
+    else:
+        repost = ReelRepost(
+            user_id=current_user.id,
+            reel_id=reel.id,
+            created_at=utc_now(),
+        )
+        db.add(repost)
+        is_reposted = True
+        message = "Reel reposted successfully"
+
+    db.commit()
+
+    repost_count = db.query(func.count(ReelRepost.id)).filter(
+        ReelRepost.reel_id == reel.id
+    ).scalar() or 0
+
+    await invalidate_feed_cache()
+
+    return {
+        "success": True,
+        "message": message,
+        "reel_id": reel.id,
+        "is_reposted": is_reposted,
+        "repost_count": int(repost_count),
+    }
+    
 
 
 # =========================================================
