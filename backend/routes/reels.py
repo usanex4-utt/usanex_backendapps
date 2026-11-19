@@ -669,6 +669,7 @@ async def get_reels_feed(
 # FOLLOWING USERS REPOSTS FEED
 # =========================================================
 
+
 def _repost_profile_access(owner_id, owner_private, viewer_id):
     mutual_follow = and_(
         exists().where(
@@ -676,13 +677,14 @@ def _repost_profile_access(owner_id, owner_private, viewer_id):
                 UserFollow.follower_id == viewer_id,
                 UserFollow.following_id == owner_id,
             )
-        ),
+        ).correlate_except(UserFollow),
+
         exists().where(
             and_(
                 UserFollow.follower_id == owner_id,
                 UserFollow.following_id == viewer_id,
             )
-        ),
+        ).correlate_except(UserFollow),
     )
 
     connected = exists().where(
@@ -699,7 +701,7 @@ def _repost_profile_access(owner_id, owner_private, viewer_id):
                 ),
             ),
         )
-    )
+    ).correlate_except(UserConnection)
 
     return or_(
         owner_private.is_(False),
@@ -707,7 +709,7 @@ def _repost_profile_access(owner_id, owner_private, viewer_id):
         mutual_follow,
         connected,
     )
-
+    
 
 @router.get("/feed/reposts")
 def get_following_reposts_feed(
