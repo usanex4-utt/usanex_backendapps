@@ -426,6 +426,8 @@ def enrich_reels_for_viewer(
                 reel.id in liked_ids,
                 reel.id in saved_ids,
                 is_following,
+                reel.id in reposted_ids,
+                repost_counts.get(reel.id, 0),
             )
         )
     return result
