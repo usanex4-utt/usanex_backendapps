@@ -328,6 +328,13 @@ def build_profile_response(
         target_user.id,
     )
 
+        reels_count, videos_count = get_user_reel_video_counts(
+        db,
+        target_user.id,
+    )
+
+    total_posts_count = len(posts) + reels_count + videos_count
+
     content = [
         serialize_post(post)
         for post in posts
@@ -358,7 +365,7 @@ def build_profile_response(
             "followers": followers_count,
             "connected": connected_count,
             "following": following_count,
-            "posts": len(posts),
+            "posts": total_posts_count,
         },
 
         "content": content,
