@@ -946,6 +946,102 @@ def get_user_reels(
     }
 
 
+
+# =========================================================
+# USER REPOSTS / PROFILE REPOSTS
+# =========================================================
+
+@router.get("/user/{user_id}/reposts")
+def get_user_reposts(
+    user_id: str,
+    limit: int = Query(50, ge=1, le=MAX_REEL_LIST_LIMIT),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    profile_user = (
+        db.query(User)
+        .filter(User.user_id == user_id)
+        .first()
+    )
+
+    if profile_user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found",
+        )
+
+    if not can_view_profile_content(
+        db, current_user, profile_user
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail=PRIVATE_CONTENT_MESSAGE,
+        )
+
+    OriginalCreator = aliased(User)
+
+    rows = (
+        db.query(ReelRepost, Reel, OriginalCreator)
+        .join(
+            Reel,
+            Reel.id == ReelRepost.reel_id,
+        )
+        .join(
+            OriginalCreator,
+            OriginalCreator.id == Reel.user_id,
+        )
+        .filter(
+            ReelRepost.user_id == profile_user.id,
+            Reel.status == "published",
+            Reel.visibility == "public",
+            Reel.is_safe.is_(True),
+
+            _repost_profile_access(
+                OriginalCreator.id,
+                OriginalCreator.is_private,
+                current_user.id,
+            ),
+        )
+        .order_by(
+            ReelRepost.created_at.desc(),
+            ReelRepost.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    reposts = []
+
+    for repost, reel, original_creator in rows:
+        reel_data = serialize_reel_for_viewer(
+            db,
+            reel,
+            current_user.id,
+            original_creator,
+        )
+
+        reel_data["is_repost"] = True
+        reel_data["reposted_at"] = (
+            repost.created_at.isoformat()
+            if repost.created_at else None
+        )
+        reel_data["reposted_by"] = serialize_user(profile_user)
+
+        reposts.append(reel_data)
+
+    return {
+        "success": True,
+        "reposts": reposts,
+        "count": len(reposts),
+        "limit": limit,
+        "offset": offset,
+        "owner": serialize_user(profile_user),
+    }
+    
+
+
 @router.get("/me/saved")
 def get_saved_reels(
     limit: int = Query(50, ge=1, le=MAX_REEL_LIST_LIMIT),
