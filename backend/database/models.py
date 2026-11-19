@@ -1399,6 +1399,49 @@ class ReelSave(Base):
         ),
     )
 
+# =========================================================
+# REEL REPOST
+# =========================================================
+
+class ReelRepost(Base):
+    __tablename__ = "reel_reposts"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    user_id = Column(
+        Integer,
+        index=True,
+        nullable=False,
+    )
+
+    reel_id = Column(
+        Integer,
+        index=True,
+        nullable=False,
+    )
+
+    created_at = Column(
+        DateTime,
+        index=True,
+        nullable=False,
+        default=utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id",
+            "reel_id",
+            name="uq_reel_repost_user_reel",
+        ),
+        Index(
+            "ix_reel_reposts_reel_created",
+            "reel_id",
+            "created_at",
+        ),
+    )
+
+
+
 
 # =========================================================
 # REEL DOWNLOAD
