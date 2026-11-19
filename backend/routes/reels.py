@@ -289,9 +289,13 @@ def _attach_viewer_flags(
     is_liked: bool,
     is_saved: bool,
     is_following: bool,
-) -> dict[str, Any]:
+    is_reposted: bool = False,
+    repost_count: int = 0,
+ ) -> dict[str, Any]:
     data["liked"] = bool(is_liked)
     data["saved"] = bool(is_saved)
+    data["is_reposted"] = bool(is_reposted)
+    data["repost_count"] = int(repost_count or 0)
     if data.get("creator") is not None:
         data["creator"]["is_following"] = bool(is_following)
     return data
