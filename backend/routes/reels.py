@@ -25,8 +25,8 @@ from fastapi import (
     UploadFile,
 )
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
-from sqlalchemy import func, case
+from sqlalchemy.orm import Session, aliased
+from sqlalchemy import func, case, and_, or_, exists
 
 from ..core.redis_client import get_redis
 from ..database.database import get_db
@@ -664,8 +664,50 @@ async def get_reels_feed(
 
 
 # =========================================================
+
+# =========================================================
 # FOLLOWING USERS REPOSTS FEED
 # =========================================================
+
+def _repost_profile_access(owner_id, owner_private, viewer_id):
+    mutual_follow = and_(
+        exists().where(
+            and_(
+                UserFollow.follower_id == viewer_id,
+                UserFollow.following_id == owner_id,
+            )
+        ),
+        exists().where(
+            and_(
+                UserFollow.follower_id == owner_id,
+                UserFollow.following_id == viewer_id,
+            )
+        ),
+    )
+
+    connected = exists().where(
+        and_(
+            UserConnection.status == "connected",
+            or_(
+                and_(
+                    UserConnection.user_one_id == viewer_id,
+                    UserConnection.user_two_id == owner_id,
+                ),
+                and_(
+                    UserConnection.user_one_id == owner_id,
+                    UserConnection.user_two_id == viewer_id,
+                ),
+            ),
+        )
+    )
+
+    return or_(
+        owner_private.is_(False),
+        owner_id == viewer_id,
+        mutual_follow,
+        connected,
+    )
+
 
 @router.get("/feed/reposts")
 def get_following_reposts_feed(
@@ -674,10 +716,23 @@ def get_following_reposts_feed(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    Reposter = aliased(User)
+    OriginalCreator = aliased(User)
+
     rows = (
-        db.query(ReelRepost, Reel, User)
-        .join(Reel, Reel.id == ReelRepost.reel_id)
-        .join(User, User.id == ReelRepost.user_id)
+        db.query(ReelRepost, Reel, Reposter, OriginalCreator)
+        .join(
+            Reel,
+            Reel.id == ReelRepost.reel_id,
+        )
+        .join(
+            Reposter,
+            Reposter.id == ReelRepost.user_id,
+        )
+        .join(
+            OriginalCreator,
+            OriginalCreator.id == Reel.user_id,
+        )
         .join(
             UserFollow,
             UserFollow.following_id == ReelRepost.user_id,
@@ -687,6 +742,18 @@ def get_following_reposts_feed(
             Reel.status == "published",
             Reel.visibility == "public",
             Reel.is_safe.is_(True),
+
+            _repost_profile_access(
+                Reposter.id,
+                Reposter.is_private,
+                current_user.id,
+            ),
+
+            _repost_profile_access(
+                OriginalCreator.id,
+                OriginalCreator.is_private,
+                current_user.id,
+            ),
         )
         .order_by(
             ReelRepost.created_at.desc(),
@@ -699,17 +766,7 @@ def get_following_reposts_feed(
 
     reposts = []
 
-    for repost, reel, reposter in rows:
-        original_creator = get_creator(db, reel.user_id)
-
-        if not can_view_profile_content(db, current_user, reposter):
-            continue
-
-        if not can_view_profile_content(
-            db, current_user, original_creator
-        ):
-            continue
-
+    for repost, reel, reposter, original_creator in rows:
         reel_data = serialize_reel_for_viewer(
             db,
             reel,
