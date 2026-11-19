@@ -319,14 +319,14 @@ def serialize_reel_for_viewer(
         ReelSave.reel_id == reel.id,
         ReelSave.user_id == viewer_id,
     ).first() is not None
-        is_reposted = db.query(ReelRepost.id).filter(
-        ReelRepost.reel_id == reel.id,
-        ReelRepost.user_id == viewer_id,
+    is_reposted = db.query(ReelRepost.id).filter(
+      ReelRepost.reel_id == reel.id,
+      ReelRepost.user_id == viewer_id,
     ).first() is not None
 
 repost_count = db.query(func.count(ReelRepost.id)).filter(
-        ReelRepost.reel_id == reel.id,
-    ).scalar() or 0
+  ReelRepost.reel_id == reel.id,
+).scalar() or 0
 
     is_following = False
     if creator is not None and creator.id != viewer_id:
