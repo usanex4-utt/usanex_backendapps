@@ -332,6 +332,8 @@ def serialize_reel_for_viewer(
         is_liked,
         is_saved,
         is_following,
+        is_reposted,
+        repost_count,
     )
 
 
