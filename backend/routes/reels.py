@@ -324,7 +324,7 @@ def serialize_reel_for_viewer(
         ReelRepost.user_id == viewer_id,
     ).first() is not None
 
-    repost_count = db.query(func.count(ReelRepost.id)).filter(
+repost_count = db.query(func.count(ReelRepost.id)).filter(
         ReelRepost.reel_id == reel.id,
     ).scalar() or 0
 
