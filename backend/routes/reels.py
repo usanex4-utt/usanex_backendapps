@@ -33,6 +33,7 @@ from ..database.database import get_db
 from ..database.models import (
     User,
     UserSession,
+    UserConnection,
     Reel,
     ReelComment,
     ReelCommentLike,
