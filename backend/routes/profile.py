@@ -251,6 +251,26 @@ def get_user_posts(db: Session, user_id: int):
     )
 
 
+def get_user_reel_video_counts(db: Session, user_id: int):
+
+    base_query = db.query(Reel.id).filter(
+        Reel.user_id == user_id,
+        Reel.status.notin_(["deleting", "deleted"]),
+        Reel.visibility.notin_(["deleting", "deleted"]),
+    )
+
+    reels_count = base_query.filter(
+        Reel.duration < 150
+    ).count()
+
+    videos_count = base_query.filter(
+        Reel.duration >= 150,
+        Reel.duration <= 600
+    ).count()
+
+    return reels_count, videos_count
+
+
 # =========================================================
 # POST SERIALIZER
 # =========================================================
