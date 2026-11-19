@@ -20,6 +20,7 @@ import cloudinary.uploader
 from ..database.database import get_db
 from ..database.models import (
     Post,
+    Reel,
     User,
     UserConnection,
     UserFollow,
