@@ -2148,6 +2148,7 @@ def add_comment(
             "id": comment.id,
             "user_id": comment.user_id,
             "reel_id": comment.reel_id,
+            "parent_comment_id": comment.parent_comment_id,
             "content": comment.content,
             "created_at": comment.created_at.isoformat() if comment.created_at else None,
             "user": serialize_user(current_user),
