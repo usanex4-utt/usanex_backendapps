@@ -1930,8 +1930,19 @@ async def download_reel(
             raise HTTPException(status_code=400, detail="Reel has no Cloudinary asset")
 
         # Reel ke owner ka username nikaalein
+        
         owner = db.query(User).filter(User.id == reel.user_id).first()
+
+        # Owner ne downloading band ki hai to download block karo
+        if owner and bool(owner.disable_reel_downloads):
+            
+            raise HTTPException(
+              status_code=403,
+              detail="This creator has turned off Reel downloading",
+            )
+
         owner_username = owner.username if owner else "UtaNexa"
+
 
         # Watermark URL generate karein
         watermarked_url = build_watermarked_video_url(public_id, owner_username)
