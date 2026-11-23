@@ -146,20 +146,20 @@ class User(Base):
         default=False,
         server_default="false",
     )
-     # Reel privacy and download preferences
-     hide_reel_counts = Column(
-         Boolean,
-         nullable=False,
-         default=False,
-         server_default="false",
-     )
+    # Reel privacy and download preferences
+    hide_reel_counts = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
-     disable_reel_downloads = Column(
-         Boolean,
-         nullable=False,
-         default=False,
-         server_default="false",
-     )
+    disable_reel_downloads = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
     __table_args__ = (
         Index(
