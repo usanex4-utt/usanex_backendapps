@@ -93,6 +93,12 @@ class PrivacyToggleBody(BaseModel):
     is_private: bool
 
 
+class ReelPreferencesBody(BaseModel):
+    hide_reel_counts: bool | None = None
+    disable_reel_downloads: bool | None = None
+    
+
+
 # =========================================================
 # TEXT CLEANER
 # =========================================================
