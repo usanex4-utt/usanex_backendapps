@@ -525,6 +525,87 @@ async def update_my_privacy(
     }
 
 
+
+# =========================================================
+# REEL PREFERENCES
+# =========================================================
+
+@router.get("/me/reel-preferences")
+async def get_reel_preferences(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = await get_current_user_from_request(
+        request=request,
+        db=db,
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Login required",
+        )
+
+    return {
+        "success": True,
+        "hide_reel_counts": bool(user.hide_reel_counts),
+        "disable_reel_downloads": bool(user.disable_reel_downloads),
+    }
+
+
+@router.patch("/me/reel-preferences")
+async def update_reel_preferences(
+    body: ReelPreferencesBody,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    user = await get_current_user_from_request(
+        request=request,
+        db=db,
+    )
+
+    if user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Login required",
+        )
+
+    if (
+        body.hide_reel_counts is None
+        and body.disable_reel_downloads is None
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="At least one preference is required",
+        )
+
+    try:
+        if body.hide_reel_counts is not None:
+            user.hide_reel_counts = body.hide_reel_counts
+
+        if body.disable_reel_downloads is not None:
+            user.disable_reel_downloads = body.disable_reel_downloads
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to update Reel preferences",
+        )
+
+    return {
+        "success": True,
+        "hide_reel_counts": bool(user.hide_reel_counts),
+        "disable_reel_downloads": bool(user.disable_reel_downloads),
+        "message": "Reel preferences updated successfully",
+    }
+    
+
+
 # =========================================================
 # UPLOAD PROFILE PHOTO (CLOUDINARY)
 # =========================================================
