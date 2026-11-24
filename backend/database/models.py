@@ -829,6 +829,12 @@ class Reel(Base):
         nullable=False,
         default="published",
     )
+     disable_download = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+     )
 
     # -----------------------------
     # ANALYTICS
