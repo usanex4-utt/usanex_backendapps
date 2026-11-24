@@ -44,6 +44,39 @@ def run_migrations():
 
             with engine.begin() as connection:
                 connection.execute(text(sql))
+    
+    # Initialize per-Reel download preference safely.
+    inspector = inspect(engine)
+
+    if inspector.has_table("reels"):
+        reel_columns = {
+            column["name"]
+            for column in inspector.get_columns("reels")
+        }
+
+        if "disable_download" in reel_columns:
+            with engine.begin() as connection:
+                connection.execute(text("""
+                    UPDATE reels
+                    SET disable_download = FALSE
+                    WHERE disable_download IS NULL
+                """))
+
+                connection.execute(text("""
+                    ALTER TABLE reels
+                    ALTER COLUMN disable_download SET DEFAULT FALSE
+                """))
+
+                connection.execute(text("""
+                    ALTER TABLE reels
+                    ALTER COLUMN disable_download SET NOT NULL
+                """))
+
+            print(
+                "[Usanex Migration] Reel download "
+                "preferences initialized."
+            )
+            
 
     # Initialize Reel likes_count safely.
     inspector = inspect(engine)
