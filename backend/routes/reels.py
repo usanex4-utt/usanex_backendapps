@@ -268,6 +268,7 @@ def serialize_reel(reel: Reel, creator: Optional[User] = None) -> dict[str, Any]
         "replay_count": int(reel.replay_count or 0),
         "share_count": int(reel.share_count or 0),
         "save_count": int(reel.save_count or 0),
+        "disable_download": bool(getattr(reel, "disable_download", False)),
         "download_count": int(reel.download_count or 0),
         "comment_count": int(reel.comment_count or 0),
         "likes_count": int(reel.likes_count or 0),
