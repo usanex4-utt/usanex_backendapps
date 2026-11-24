@@ -1984,6 +1984,11 @@ async def download_reel(
     try:
         reel = get_reel_or_404(db, reel_id)
         ensure_reel_access(db, reel, current_user)
+        if bool(getattr(reel, "disable_download", False)):
+            raise HTTPException(
+                status_code=403,
+                detail="The creator has turned off downloading for this Reel",
+            )
 
         public_id = getattr(reel, "cloudinary_public_id", None)
         if not public_id:
@@ -1992,14 +1997,6 @@ async def download_reel(
         # Reel ke owner ka username nikaalein
         
         owner = db.query(User).filter(User.id == reel.user_id).first()
-
-        # Owner ne downloading band ki hai to download block karo
-        if owner and bool(owner.disable_reel_downloads):
-            
-            raise HTTPException(
-              status_code=403,
-              detail="This creator has turned off Reel downloading",
-            )
 
         owner_username = owner.username if owner else "UtaNexa"
 
