@@ -469,6 +469,8 @@ class ReelUpdateRequest(BaseModel):
     hashtags: Optional[str] = Field(default=None, max_length=MAX_HASHTAGS_LENGTH)
     language: Optional[str] = Field(default=None, max_length=50)
     
+class ReelDownloadPreferenceRequest(BaseModel):
+    disable_download: bool
 
 
 # =========================================================
@@ -746,6 +748,7 @@ def _repost_profile_access(owner_id, owner_private, viewer_id):
         owner_id == viewer_id,
         mutual_follow,
         connected,
+        
     )
     
 
