@@ -834,7 +834,7 @@ class Reel(Base):
         nullable=False,
         default=False,
         server_default="false",
-     )
+    )
 
     # -----------------------------
     # ANALYTICS
