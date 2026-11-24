@@ -1723,6 +1723,60 @@ async def update_my_reel(
     }
     
 
+# =========================================================
+# UPDATE REEL DOWNLOAD PREFERENCE
+# =========================================================
+
+@router.patch("/{reel_id}/download-preference")
+async def update_reel_download_preference(
+    reel_id: int,
+    payload: ReelDownloadPreferenceRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    reel = (
+        db.query(Reel)
+        .filter(Reel.id == reel_id)
+        .with_for_update()
+        .first()
+    )
+
+    if reel is None:
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    if reel.user_id != current_user.id:
+        raise HTTPException(
+            status_code=403,
+            detail="You can change download settings only for your own Reel",
+        )
+
+    if (
+        reel.status in {"deleting", "deleted"}
+        or reel.visibility in {"deleting", "deleted"}
+    ):
+        raise HTTPException(status_code=404, detail="Reel not found")
+
+    reel.disable_download = payload.disable_download
+    reel.updated_at = utc_now()
+
+    try:
+        db.commit()
+        db.refresh(reel)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail="Could not update Reel download preference",
+        )
+
+    await invalidate_feed_cache()
+
+    return {
+        "success": True,
+        "reel_id": reel.id,
+        "disable_download": reel.disable_download,
+        }
+    
 
 # =========================================================
 # LIKE / UNLIKE
