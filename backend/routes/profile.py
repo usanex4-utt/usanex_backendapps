@@ -596,6 +596,9 @@ async def update_reel_preferences(
             status_code=500,
             detail="Unable to update Reel preferences",
         )
+    # Clear all Reel feed caches so every viewer gets updated creator preferences
+    from .reels import invalidate_feed_cache
+    await invalidate_feed_cache()
 
     return {
         "success": True,
@@ -603,10 +606,6 @@ async def update_reel_preferences(
         "disable_reel_downloads": bool(user.disable_reel_downloads),
         "message": "Reel preferences updated successfully",
     }
-    
-    # Clear all Reel feed caches so every viewer gets updated creator preferences
-    from .reels import invalidate_feed_cache
-    await invalidate_feed_cache()
 
 # =========================================================
 # UPLOAD PROFILE PHOTO (CLOUDINARY)
