@@ -240,6 +240,7 @@ def serialize_user(
         "name": user.name,
         "profile_photo": user.profile_photo,
     }
+    "hide_reel_counts": bool(getattr(user, "hide_reel_counts", False)),
     if is_following is not None:
         data["is_following"] = bool(is_following)
     return data
