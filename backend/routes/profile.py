@@ -604,7 +604,9 @@ async def update_reel_preferences(
         "message": "Reel preferences updated successfully",
     }
     
-
+    # Clear all Reel feed caches so every viewer gets updated creator preferences
+    from .reels import invalidate_feed_cache
+    await invalidate_feed_cache()
 
 # =========================================================
 # UPLOAD PROFILE PHOTO (CLOUDINARY)
