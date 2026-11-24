@@ -829,7 +829,7 @@ class Reel(Base):
         nullable=False,
         default="published",
     )
-     disable_download = Column(
+    disable_download = Column(
         Boolean,
         nullable=False,
         default=False,
