@@ -333,7 +333,7 @@ def get_fusion_session(
             "user_one_started_at": session.user_one_started_at,
             "user_two_started_at": session.user_two_started_at,
             "countdown_started_at": to_utc_iso(session.countdown_started_at),
-            "fusion_started_at": session.fusion_started_at,
+            "fusion_started_at": to_utc_iso(session.fusion_started_at),
             "user_one_fusion_completed": session.user_one_fusion_completed,
             "user_two_fusion_completed": session.user_two_fusion_completed,
             "user_one_fusion_completed_at": session.user_one_fusion_completed_at,
