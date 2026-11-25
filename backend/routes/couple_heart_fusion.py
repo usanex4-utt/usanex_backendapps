@@ -16,6 +16,10 @@ from backend.database.couple_models import (
 )
 from backend.routes.auth import get_current_user_from_request
 from backend.services.access_control import can_chat
+def to_utc_iso(value):
+  if value is None:
+     return None
+  return value.replace(tzinfo=timezone.utc).isoformat()
 
 
 router = APIRouter(
