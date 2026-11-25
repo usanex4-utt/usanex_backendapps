@@ -123,12 +123,12 @@ def create_fusion_session(
     except Exception:
         db.rollback()
         raise HTTPException(500, "Could not create fusion session.")
-        event = {
-        "type": "heart_fusion_updated",
-        "action": "session_created",
-        "session_id": session.id,
-        "status": session.status,
-        "created_by_user_id": user_id,
+    event = {
+     "type": "heart_fusion_updated",
+     "action": "session_created",
+     "session_id": session.id,
+     "status": session.status,
+     "created_by_user_id": user_id,
     }
 
     background_tasks.add_task(
