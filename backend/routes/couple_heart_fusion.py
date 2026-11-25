@@ -555,7 +555,7 @@ def complete_fusion_animation(
         db.rollback()
         raise HTTPException(500, "Could not save fusion completion.")
         
-    )
+    
 
     return {
         "success": True,
