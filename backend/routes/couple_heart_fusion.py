@@ -214,6 +214,48 @@ def submit_second_heart(
     }
 
 
+@router.get("/rooms/{partner_id}/active-session")
+def get_active_fusion_session(
+    partner_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    if user_id == partner_id:
+        raise HTTPException(400, "Invalid partner.")
+
+    if not can_chat(db, user_id, partner_id):
+        raise HTTPException(403, "Fusion requires connected partners.")
+
+    room = db.query(CoupleRoom).filter(
+        CoupleRoom.is_active == True,
+        CoupleRoom.user_one_id == min(user_id, partner_id),
+        CoupleRoom.user_two_id == max(user_id, partner_id),
+    ).first()
+
+    if room is None:
+        raise HTTPException(404, "Couple room not found.")
+
+    session = (
+        db.query(CoupleHeartFusion)
+        .filter(
+            CoupleHeartFusion.room_id == room.id,
+            CoupleHeartFusion.status.in_(
+                ["waiting", "countdown", "fusing", "rating"]
+            ),
+        )
+        .order_by(CoupleHeartFusion.created_at.desc())
+        .first()
+    )
+
+    return {
+        "success": True,
+        "session_id": session.id if session else None,
+        "status": session.status if session else None,
+    }
+
+
 
 @router.get("/sessions/{session_id}")
 def get_fusion_session(
