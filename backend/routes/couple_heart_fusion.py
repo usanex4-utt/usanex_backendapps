@@ -1,7 +1,7 @@
 from datetime import timezone
 import secrets
 import random
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException,BackgroundTasks
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ def to_utc_iso(value):
   if value is None:
      return None
   return value.replace(tzinfo=timezone.utc).isoformat()
+from backend.websocket.couple_manager import couple_manager
 
 
 router = APIRouter(
@@ -42,6 +43,7 @@ class SubmitFusionRatingRequest(BaseModel):
 @router.post("/sessions")
 def create_fusion_session(
     payload: CreateFusionRequest,
+    background_tasks: BackgroundTasks
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
@@ -121,6 +123,24 @@ def create_fusion_session(
     except Exception:
         db.rollback()
         raise HTTPException(500, "Could not create fusion session.")
+        event = {
+        "type": "heart_fusion_updated",
+        "action": "session_created",
+        "session_id": session.id,
+        "status": session.status,
+        "created_by_user_id": user_id,
+    }
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        user_id,
+        event,
+    )
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        partner_id,
+        event,
+    )
 
     return {
         "success": True,
