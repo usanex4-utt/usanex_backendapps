@@ -833,6 +833,7 @@ async def get_connections(request: Request, db: Session = Depends(get_db)):
         category = personal_category.category if personal_category else None
 
         users.append({
+            "id": user.id,
             "user_id": user.user_id,
             "username": user.username,
             "name": user.name,
