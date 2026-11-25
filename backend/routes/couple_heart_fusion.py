@@ -316,7 +316,7 @@ def get_fusion_session(
 
     return {
         "success": True,
-        "server_now": to_utc_iso(utcnow())
+        "server_now": to_utc_iso(utcnow()),
         "session": {
             "id": session.id,
             "room_id": session.room_id,
