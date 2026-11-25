@@ -26,6 +26,9 @@ class CreateFusionRequest(BaseModel):
     partner_id: int = Field(gt=0)
     first_heart: dict
 
+class SubmitSecondHeartRequest(BaseModel):
+    second_heart: dict
+
 
 @router.post("/sessions")
 def create_fusion_session(
@@ -121,5 +124,84 @@ def create_fusion_session(
             "fusion_seed": session.fusion_seed,
             "background_seed": session.background_seed,
         },
+    }
+
+
+
+@router.post("/sessions/{session_id}/heart")
+def submit_second_heart(
+    session_id: int,
+    payload: SubmitSecondHeartRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    session = (
+        db.query(CoupleHeartFusion)
+        .filter(CoupleHeartFusion.id == session_id)
+        .with_for_update()
+        .first()
+    )
+
+    if session is None:
+        raise HTTPException(404, "Fusion session not found.")
+
+    if user_id not in (session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "You are not part of this fusion.")
+
+    if user_id == session.created_by_user_id:
+        raise HTTPException(
+            403,
+            "You already selected the first heart.",
+        )
+
+    if not can_chat(
+        db,
+        session.user_one_id,
+        session.user_two_id,
+    ):
+        raise HTTPException(
+            403,
+            "Fusion requires connected partners.",
+        )
+
+    if session.second_heart is not None:
+        return {
+            "success": True,
+            "message": "Second heart already submitted.",
+            "session_id": session.id,
+            "second_heart": session.second_heart,
+            "status": session.status,
+        }
+
+    if session.status != "waiting":
+        raise HTTPException(
+            409,
+            "This fusion session is no longer accepting hearts.",
+        )
+
+    session.second_heart = payload.second_heart
+    session.updated_at = utcnow()
+
+    try:
+        db.commit()
+        db.refresh(session)
+    except Exception:
+        db.rollback()
+        raise HTTPException(
+            500,
+            "Could not submit second heart.",
+        )
+
+    return {
+        "success": True,
+        "message": "Second heart submitted successfully.",
+        "session_id": session.id,
+        "first_heart": session.first_heart,
+        "second_heart": session.second_heart,
+        "fusion_seed": session.fusion_seed,
+        "background_seed": session.background_seed,
+        "status": session.status,
     }
   
