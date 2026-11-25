@@ -204,4 +204,67 @@ def submit_second_heart(
         "background_seed": session.background_seed,
         "status": session.status,
     }
+
+
+
+@router.get("/sessions/{session_id}")
+def get_fusion_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    session = db.query(CoupleHeartFusion).filter(
+        CoupleHeartFusion.id == session_id
+    ).first()
+
+    if session is None:
+        raise HTTPException(
+            404,
+            "Fusion session not found.",
+        )
+
+    if user_id not in (
+        session.user_one_id,
+        session.user_two_id,
+    ):
+        raise HTTPException(
+            403,
+            "You are not part of this fusion.",
+        )
+
+    if not can_chat(
+        db,
+        session.user_one_id,
+        session.user_two_id,
+    ):
+        raise HTTPException(
+            403,
+            "Fusion requires connected partners.",
+        )
+
+    return {
+        "success": True,
+        "session": {
+            "id": session.id,
+            "room_id": session.room_id,
+            "created_by_user_id": session.created_by_user_id,
+            "first_heart": session.first_heart,
+            "second_heart": session.second_heart,
+            "fusion_seed": session.fusion_seed,
+            "background_seed": session.background_seed,
+            "surprise_heart": session.surprise_heart,
+            "user_one_started": session.user_one_started,
+            "user_two_started": session.user_two_started,
+            "user_one_started_at": session.user_one_started_at,
+            "user_two_started_at": session.user_two_started_at,
+            "countdown_started_at": session.countdown_started_at,
+            "fusion_started_at": session.fusion_started_at,
+            "completed_at": session.completed_at,
+            "status": session.status,
+            "created_at": session.created_at,
+            "updated_at": session.updated_at,
+        },
+    }
   
