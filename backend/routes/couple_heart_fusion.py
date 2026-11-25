@@ -267,4 +267,74 @@ def get_fusion_session(
             "updated_at": session.updated_at,
         },
     }
+
+
+
+@router.post("/sessions/{session_id}/start")
+def start_fusion(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    session = (
+        db.query(CoupleHeartFusion)
+        .filter(CoupleHeartFusion.id == session_id)
+        .with_for_update()
+        .first()
+    )
+
+    if session is None:
+        raise HTTPException(404, "Fusion session not found.")
+
+    if user_id not in (session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "You are not part of this fusion.")
+
+    if not can_chat(db, session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "Fusion requires connected partners.")
+
+    if session.status != "waiting":
+        raise HTTPException(409, "Fusion is not waiting for Start.")
+
+    if not session.first_heart or not session.second_heart:
+        raise HTTPException(409, "Both hearts must be selected first.")
+
+    now = utcnow()
+
+    if user_id == session.user_one_id:
+        session.user_one_started = True
+        if session.user_one_started_at is None:
+            session.user_one_started_at = now
+    else:
+        session.user_two_started = True
+        if session.user_two_started_at is None:
+            session.user_two_started_at = now
+
+    if session.user_one_started and session.user_two_started:
+        session.status = "countdown"
+        session.countdown_started_at = now
+
+    session.updated_at = now
+
+    try:
+        db.commit()
+        db.refresh(session)
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Could not start fusion.")
+
+    return {
+        "success": True,
+        "message": (
+            "Both partners are ready. Countdown started."
+            if session.status == "countdown"
+            else "Your Start is saved. Waiting for partner."
+        ),
+        "session_id": session.id,
+        "user_one_started": session.user_one_started,
+        "user_two_started": session.user_two_started,
+        "countdown_started_at": session.countdown_started_at,
+        "status": session.status,
+    }
   
