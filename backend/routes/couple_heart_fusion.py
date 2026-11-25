@@ -178,7 +178,6 @@ def submit_second_heart(
     if session.second_heart is not None:
         return {
             "success": True,
-            "server_now": to_utc_iso(utcnow()),
             "message": "Second heart already submitted.",
             "session_id": session.id,
             "second_heart": session.second_heart,
@@ -317,6 +316,7 @@ def get_fusion_session(
 
     return {
         "success": True,
+        "server_now": to_utc_iso(utcnow())
         "session": {
             "id": session.id,
             "room_id": session.room_id,
