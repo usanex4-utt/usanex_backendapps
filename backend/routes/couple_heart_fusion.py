@@ -141,6 +141,7 @@ def create_fusion_session(
         partner_id,
         event,
     )
+        
 
     return {
         "success": True,
