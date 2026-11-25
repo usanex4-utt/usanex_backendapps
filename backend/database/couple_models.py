@@ -15,6 +15,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    CheckConstraint,
+    JSON,
 )
 
 from .database import Base
@@ -633,3 +635,128 @@ class CoupleAIEvent(Base):
             "created_at",
         ),
     )
+
+
+
+# =========================================================
+# TWO HEARTS ONE LOVE — FUSION SESSION
+# =========================================================
+
+class CoupleHeartFusion(Base):
+
+    __tablename__ = "couple_heart_fusions"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    room_id = Column(Integer, nullable=False, index=True)
+
+    user_one_id = Column(Integer, nullable=False, index=True)
+    user_two_id = Column(Integer, nullable=False, index=True)
+
+    created_by_user_id = Column(Integer, nullable=False)
+
+    # Both partners' selected hearts
+    first_heart = Column(JSON, nullable=True)
+    second_heart = Column(JSON, nullable=True)
+
+    # Shared seeds ensure identical generated visuals
+    fusion_seed = Column(String(128), nullable=False, unique=True)
+    background_seed = Column(String(128), nullable=False)
+
+    # Generated third Surprise Crystal Heart
+    surprise_heart = Column(JSON, nullable=True)
+
+    # Both partners must independently press Start
+    user_one_started = Column(Boolean, default=False, nullable=False)
+    user_two_started = Column(Boolean, default=False, nullable=False)
+
+    user_one_started_at = Column(DateTime, nullable=True)
+    user_two_started_at = Column(DateTime, nullable=True)
+
+    countdown_started_at = Column(DateTime, nullable=True)
+    fusion_started_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+
+    status = Column(
+        String(30),
+        default="waiting",
+        nullable=False,
+        index=True,
+    )
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+        index=True,
+    )
+
+    updated_at = Column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+        onupdate=utcnow,
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_heart_fusion_room_created",
+            "room_id",
+            "created_at",
+        ),
+    )
+
+
+# =========================================================
+# TWO HEARTS ONE LOVE — PARTNER RATINGS
+# =========================================================
+
+class CoupleHeartFusionRating(Base):
+
+    __tablename__ = "couple_heart_fusion_ratings"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    fusion_id = Column(
+        Integer,
+        nullable=False,
+        index=True,
+    )
+
+    room_id = Column(
+        Integer,
+        nullable=False,
+        index=True,
+    )
+
+    user_id = Column(
+        Integer,
+        nullable=False,
+        index=True,
+    )
+
+    rating = Column(Integer, nullable=False)
+
+    created_at = Column(
+        DateTime,
+        nullable=False,
+        default=utcnow,
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "fusion_id",
+            "user_id",
+            name="uq_heart_fusion_user_rating",
+        ),
+        CheckConstraint(
+            "rating >= 1 AND rating <= 3",
+            name="ck_heart_fusion_rating_1_to_3",
+        ),
+        Index(
+            "ix_heart_fusion_rating_room",
+            "room_id",
+            "fusion_id",
+        ),
+    )
+    
