@@ -43,7 +43,7 @@ class SubmitFusionRatingRequest(BaseModel):
 @router.post("/sessions")
 def create_fusion_session(
     payload: CreateFusionRequest,
-    background_tasks: BackgroundTasks
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
