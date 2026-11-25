@@ -476,3 +476,74 @@ def create_surprise_fusion(
         "surprise_heart": session.surprise_heart,
         "status": session.status,
     }
+
+
+
+@router.post("/sessions/{session_id}/complete")
+def complete_fusion_animation(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    session = (
+        db.query(CoupleHeartFusion)
+        .filter(CoupleHeartFusion.id == session_id)
+        .with_for_update()
+        .first()
+    )
+
+    if session is None:
+        raise HTTPException(404, "Fusion session not found.")
+
+    if user_id not in (session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "You are not part of this fusion.")
+
+    if not can_chat(db, session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "Fusion requires connected partners.")
+
+    if session.surprise_heart is None:
+        raise HTTPException(409, "Surprise Crystal Heart is not ready.")
+
+    if session.status not in ("fusing", "rating"):
+        raise HTTPException(409, "Fusion animation is not active.")
+
+    now = utcnow()
+
+    if user_id == session.user_one_id:
+        session.user_one_fusion_completed = True
+        if session.user_one_fusion_completed_at is None:
+            session.user_one_fusion_completed_at = now
+    else:
+        session.user_two_fusion_completed = True
+        if session.user_two_fusion_completed_at is None:
+            session.user_two_fusion_completed_at = now
+
+    if (
+        session.user_one_fusion_completed
+        and session.user_two_fusion_completed
+    ):
+        session.status = "rating"
+
+    session.updated_at = now
+
+    try:
+        db.commit()
+        db.refresh(session)
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Could not save fusion completion.")
+
+    return {
+        "success": True,
+        "session_id": session.id,
+        "user_one_fusion_completed": session.user_one_fusion_completed,
+        "user_two_fusion_completed": session.user_two_fusion_completed,
+        "both_completed": (
+            session.user_one_fusion_completed
+            and session.user_two_fusion_completed
+        ),
+        "status": session.status,
+    }
+    
