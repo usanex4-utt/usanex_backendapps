@@ -1,9 +1,10 @@
 import secrets
 import random
+from fastapi import APIRouter, Depends, HTTPException
 from datetime import timedelta
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException
+
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
