@@ -30,6 +30,9 @@ class CreateFusionRequest(BaseModel):
 class SubmitSecondHeartRequest(BaseModel):
     second_heart: dict
 
+class SubmitFusionRatingRequest(BaseModel):
+    rating: int = Field(ge=1, le=3)
+
 
 @router.post("/sessions")
 def create_fusion_session(
