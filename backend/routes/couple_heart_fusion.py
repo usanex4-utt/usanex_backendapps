@@ -10,6 +10,7 @@ from backend.database.models import User
 from backend.database.couple_models import (
     CoupleRoom,
     CoupleHeartFusion,
+    CoupleHeartFusionRating,
     utcnow,
 )
 from backend.routes.auth import get_current_user_from_request
