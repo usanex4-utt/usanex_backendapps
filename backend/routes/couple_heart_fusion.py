@@ -178,6 +178,7 @@ def submit_second_heart(
     if session.second_heart is not None:
         return {
             "success": True,
+            "server_now": to_utc_iso(utcnow()),
             "message": "Second heart already submitted.",
             "session_id": session.id,
             "second_heart": session.second_heart,
@@ -209,7 +210,6 @@ def submit_second_heart(
 
     return {
         "success": True,
-        "server_now": to_utc_iso(utcnow()),
         "message": "Second heart submitted successfully.",
         "session_id": session.id,
         "first_heart": session.first_heart,
