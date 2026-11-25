@@ -24,6 +24,8 @@ from .couple_models import (
     CouplePresence,
     CoupleMemory,
     CoupleAIEvent,
+    CoupleHeartFusion,
+    CoupleHeartFusionRating,
 )
 
 
