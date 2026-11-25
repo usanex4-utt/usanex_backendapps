@@ -198,6 +198,23 @@ def submit_second_heart(
             "Could not submit second heart.",
         )
 
+    
+    ratings = (
+        db.query(CoupleHeartFusionRating)
+        .filter(CoupleHeartFusionRating.fusion_id == session.id)
+        .all()
+    )
+
+    user_one_rating = next(
+        (r.rating for r in ratings if r.user_id == session.user_one_id),
+        None,
+    )
+    user_two_rating = next(
+        (r.rating for r in ratings if r.user_id == session.user_two_id),
+        None,
+    )
+    
+
     return {
         "success": True,
         "message": "Second heart submitted successfully.",
