@@ -331,7 +331,7 @@ def get_fusion_session(
             "user_two_started": session.user_two_started,
             "user_one_started_at": session.user_one_started_at,
             "user_two_started_at": session.user_two_started_at,
-            "countdown_started_at": session.countdown_started_at,
+            "countdown_started_at": to_utc_iso(session.countdown_started_at),
             "fusion_started_at": session.fusion_started_at,
             "user_one_fusion_completed": session.user_one_fusion_completed,
             "user_two_fusion_completed": session.user_two_fusion_completed,
@@ -414,7 +414,7 @@ def start_fusion(
         "session_id": session.id,
         "user_one_started": session.user_one_started,
         "user_two_started": session.user_two_started,
-        "countdown_started_at": session.countdown_started_at,
+        "countdown_started_at": to_utc_iso(session.countdown_started_at),
         "status": session.status,
     }
 
