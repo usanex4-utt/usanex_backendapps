@@ -675,6 +675,15 @@ class CoupleHeartFusion(Base):
 
     countdown_started_at = Column(DateTime, nullable=True)
     fusion_started_at = Column(DateTime, nullable=True)
+        user_one_fusion_completed = Column(
+        Boolean, default=False, nullable=False
+    )
+    user_two_fusion_completed = Column(
+        Boolean, default=False, nullable=False
+    )
+
+    user_one_fusion_completed_at = Column(DateTime, nullable=True)
+    user_two_fusion_completed_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
 
     status = Column(
