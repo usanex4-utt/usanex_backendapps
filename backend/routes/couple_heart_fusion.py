@@ -549,4 +549,88 @@ def complete_fusion_animation(
         ),
         "status": session.status,
     }
+
+
+
+
+@router.post("/sessions/{session_id}/rating")
+def submit_fusion_rating(
+    session_id: int,
+    payload: SubmitFusionRatingRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    session = (
+        db.query(CoupleHeartFusion)
+        .filter(CoupleHeartFusion.id == session_id)
+        .with_for_update()
+        .first()
+    )
+
+    if session is None:
+        raise HTTPException(404, "Fusion session not found.")
+
+    if user_id not in (session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "You are not part of this fusion.")
+
+    if not can_chat(db, session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "Fusion requires connected partners.")
+
+    if session.status not in ("rating", "completed"):
+        raise HTTPException(409, "Both partners must complete the fusion first.")
+
+    existing_rating = (
+        db.query(CoupleHeartFusionRating)
+        .filter(
+            CoupleHeartFusionRating.fusion_id == session.id,
+            CoupleHeartFusionRating.user_id == user_id,
+        )
+        .first()
+    )
+
+    if existing_rating is not None:
+        raise HTTPException(409, "You have already submitted your rating.")
+
+    rating = CoupleHeartFusionRating(
+        fusion_id=session.id,
+        room_id=session.room_id,
+        user_id=user_id,
+        rating=payload.rating,
+    )
+
+    db.add(rating)
+
+    try:
+        db.flush()
+
+        rating_count = (
+            db.query(CoupleHeartFusionRating)
+            .filter(CoupleHeartFusionRating.fusion_id == session.id)
+            .count()
+        )
+
+        if rating_count >= 2:
+            session.status = "completed"
+            session.completed_at = utcnow()
+
+        session.updated_at = utcnow()
+        db.commit()
+        db.refresh(session)
+
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Could not save your rating.")
+
+    return {
+        "success": True,
+        "message": "Your rating has been saved.",
+        "session_id": session.id,
+        "your_rating": payload.rating,
+        "ratings_submitted": rating_count,
+        "both_rated": rating_count >= 2,
+        "status": session.status,
+    }
+    
     
