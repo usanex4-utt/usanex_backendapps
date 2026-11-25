@@ -315,6 +315,8 @@ def get_fusion_session(
             "id": session.id,
             "room_id": session.room_id,
             "created_by_user_id": session.created_by_user_id,
+            "user_one_id": session.user_one_id,
+            "user_two_id": session.user_two_id,
             "first_heart": session.first_heart,
             "second_heart": session.second_heart,
             "fusion_seed": session.fusion_seed,
