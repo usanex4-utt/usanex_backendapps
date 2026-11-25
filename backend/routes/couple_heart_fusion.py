@@ -1,4 +1,6 @@
-
+import secrets
+import random
+from datetime import timedelta
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -337,4 +339,141 @@ def start_fusion(
         "countdown_started_at": session.countdown_started_at,
         "status": session.status,
     }
-  
+
+
+@router.post("/sessions/{session_id}/fuse")
+def create_surprise_fusion(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_from_request),
+):
+    user_id = current_user.id
+
+    session = (
+        db.query(CoupleHeartFusion)
+        .filter(CoupleHeartFusion.id == session_id)
+        .with_for_update()
+        .first()
+    )
+
+    if session is None:
+        raise HTTPException(404, "Fusion session not found.")
+
+    if user_id not in (session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "You are not part of this fusion.")
+
+    if not can_chat(db, session.user_one_id, session.user_two_id):
+        raise HTTPException(403, "Fusion requires connected partners.")
+
+    if session.surprise_heart is not None:
+        return {
+            "success": True,
+            "message": "Existing Surprise Crystal Heart restored.",
+            "surprise_heart": session.surprise_heart,
+            "status": session.status,
+        }
+
+    if session.status != "countdown":
+        raise HTTPException(409, "Fusion countdown has not started.")
+
+    now = utcnow()
+
+    if session.countdown_started_at is None:
+        raise HTTPException(409, "Countdown timestamp is missing.")
+
+    elapsed = (now - session.countdown_started_at).total_seconds()
+
+    if elapsed < 3:
+        raise HTTPException(
+            409,
+            "Please wait for the 3-second countdown to finish.",
+        )
+
+    styles = [
+        {
+            "name": "Ruby Galaxy",
+            "colors": ["#ff1744", "#ff5c8a", "#8e0038"],
+            "glow": "#ff1744",
+        },
+        {
+            "name": "Ocean Diamond",
+            "colors": ["#00e5ff", "#2979ff", "#120078"],
+            "glow": "#00e5ff",
+        },
+        {
+            "name": "Golden Eternity",
+            "colors": ["#fff176", "#ffb300", "#ff6f00"],
+            "glow": "#ffd54f",
+        },
+        {
+            "name": "Purple Dream",
+            "colors": ["#ea80fc", "#9c27b0", "#4a148c"],
+            "glow": "#ce93d8",
+        },
+        {
+            "name": "Emerald Love",
+            "colors": ["#69f0ae", "#00c853", "#00695c"],
+            "glow": "#69f0ae",
+        },
+        {
+            "name": "Rose Crystal",
+            "colors": ["#ff80ab", "#f50057", "#880e4f"],
+            "glow": "#ff80ab",
+        },
+        {
+            "name": "Ice Diamond",
+            "colors": ["#e1f5fe", "#4fc3f7", "#0277bd"],
+            "glow": "#80d8ff",
+        },
+        {
+            "name": "Rainbow Soul",
+            "colors": ["#ff5252", "#7c4dff", "#00e5ff"],
+            "glow": "#ff80ab",
+        },
+    ]
+
+    patterns = [
+        "sparkle", "crystal", "galaxy",
+        "diamond", "stardust", "aurora",
+    ]
+
+    shapes = [
+        "classic", "royal", "double",
+        "infinity", "crystal",
+    ]
+
+    rng = random.Random(session.fusion_seed)
+    style = rng.choice(styles)
+
+    surprise_heart = {
+        "id": f"surprise-heart-{session.id}",
+        "seed": session.fusion_seed,
+        "name": style["name"],
+        "colors": style["colors"],
+        "glow": style["glow"],
+        "pattern": rng.choice(patterns),
+        "shape": rng.choice(shapes),
+        "sparkleCount": 12 + rng.randrange(25),
+        "particleCount": 20 + rng.randrange(31),
+        "rotation": rng.randrange(31) - 15,
+        "createdAt": now.isoformat(),
+    }
+
+    session.surprise_heart = surprise_heart
+    session.fusion_started_at = now
+    session.status = "fusing"
+    session.updated_at = now
+
+    try:
+        db.commit()
+        db.refresh(session)
+    except Exception:
+        db.rollback()
+        raise HTTPException(500, "Could not create Surprise Crystal Heart.")
+
+    return {
+        "success": True,
+        "message": "Surprise Crystal Heart created successfully.",
+        "surprise_heart": session.surprise_heart,
+        "status": session.status,
+    }
