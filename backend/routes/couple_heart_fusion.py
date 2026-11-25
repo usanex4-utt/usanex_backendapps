@@ -265,7 +265,7 @@ def get_fusion_session(
             "Fusion requires connected partners.",
         )
 
-        ratings = (
+    ratings = (
         db.query(CoupleHeartFusionRating)
         .filter(CoupleHeartFusionRating.fusion_id == session.id)
         .all()
