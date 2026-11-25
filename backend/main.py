@@ -46,6 +46,7 @@ from .routes import (
     connections,
     couple_realtime,
     couple_chat,
+    couple_heart_fusion,
     profile,
     reels,
     search,
