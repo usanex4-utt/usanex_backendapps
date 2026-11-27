@@ -91,3 +91,39 @@ def delete_moment_media(file_path: str) -> None:
             get_supabase_client().storage.from_(BUCKET).remove([file_path])
         except Exception:
             logger.warning(f"Supabase delete failed for {file_path}")
+
+
+# =========================================================
+# CHAT MEDIA STORAGE
+# =========================================================
+
+CHAT_BUCKET = "chat-media"
+
+
+def upload_chat_media(
+    file_bytes: bytes,
+    file_path: str,
+    content_type: str
+) -> str:
+    if not _supabase_configured():
+        raise RuntimeError("Supabase storage is not configured.")
+
+    try:
+        supabase = get_supabase_client()
+
+        supabase.storage.from_(CHAT_BUCKET).upload(
+            path=file_path,
+            file=file_bytes,
+            file_options={
+                "content-type": content_type,
+                "upsert": False,
+            },
+        )
+
+        return file_path
+
+    except Exception as e:
+        logger.error("Chat media upload failed: %s", e)
+        raise RuntimeError("Chat media upload failed.")
+        
+
