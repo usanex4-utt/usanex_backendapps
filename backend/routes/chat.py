@@ -320,7 +320,7 @@ async def save_chat_upload(file: UploadFile, sender_id: int):
 
     filename = f"{uuid.uuid4().hex}{extension}"
     storage_path = f"chats/{sender_id}/{filename}"
-    content_type = file.content_type or "application/octet-stream"
+    content_type = file.content_type or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
 
     try:
         upload_chat_media(file_bytes, storage_path, content_type)
