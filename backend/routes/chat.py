@@ -356,6 +356,15 @@ async def get_chat(
                 await message_cache.invalidate_chat(
                     current_user.id, chat_user.id
                 )
+                            cached_messages = list(reversed(cached[:limit]))
+
+            for message in cached_messages:
+                if (
+                    message.get("sender_id") == chat_user.id
+                    and message.get("receiver_id") == current_user.id
+                ):
+                    message["is_read"] = True
+                    message["read"] = True
 
             return {
                 "success": True,
