@@ -176,11 +176,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app = FastAPI(
-    title="UtaNexa",
-    # बाकी मौजूदा settings
-)
-
 # इसी जगह validation handler Paste करना है
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
