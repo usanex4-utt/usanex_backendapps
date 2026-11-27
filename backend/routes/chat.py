@@ -492,7 +492,7 @@ async def send_message(
     media_url = None
     media_type = None
     if file is not None and file.filename:
-        media_url, media_type = await save_upload(file)
+        media_url, media_type = await save_chat_upload(file, current_user.id)
 
     if not clean_content and not media_url:
         if idem_key:
