@@ -297,6 +297,38 @@ async def save_upload(file: UploadFile):
 
     return f"/static/uploads/chat/{filename}", expected_type
 
+async def save_chat_upload(file: UploadFile, sender_id: int):
+    original_name = (file.filename or "").replace("\\", "/").split("/")[-1]
+    extension = Path(original_name).suffix.lower()
+    expected_type = ALLOWED_EXTENSIONS.get(extension)
+
+    if expected_type is None:
+        raise HTTPException(status_code=400, detail="Unsupported file type.")
+
+    max_size = min(MAX_SIZES[expected_type], 50 * 1024 * 1024)
+    file_bytes = await file.read(max_size + 1)
+
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="File is empty.")
+
+    if len(file_bytes) > max_size:
+        raise HTTPException(status_code=413, detail="File size limit exceeded.")
+
+    if detect_media_type(extension, file_bytes) != expected_type:
+        raise HTTPException(status_code=400, detail="Invalid file content.")
+
+    filename = f"{uuid.uuid4().hex}{extension}"
+    storage_path = f"chats/{sender_id}/{filename}"
+    content_type = file.content_type or "application/octet-stream"
+
+    try:
+        upload_chat_media(file_bytes, storage_path, content_type)
+    except Exception:
+        logging.exception("Normal Chat media upload failed")
+        raise HTTPException(status_code=500, detail="Could not upload chat media.")
+
+    return storage_path, expected_type
+
 
 # =========================================================
 # HEALTH
