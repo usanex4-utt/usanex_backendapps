@@ -126,6 +126,15 @@ def upload_chat_media(
         logger.error("Chat media upload failed: %s", e)
         raise RuntimeError("Chat media upload failed.")
 
+def delete_chat_media(file_path: str) -> None:
+    if not _supabase_configured():
+        raise RuntimeError("Supabase storage is not configured.")
+
+    if not file_path:
+        raise ValueError("Chat media path is required.")
+
+    get_supabase_client().storage.from_(CHAT_BUCKET).remove([file_path])
+
 
 def get_chat_media_signed_url(
     file_path: str,
