@@ -489,10 +489,25 @@ async def send_message(
     if client_message_id:
         idem_key = f"chat:{current_user.id}:{client_message_id}"
         if not await idempotency.acquire(idem_key):
-            cached = await idempotency.get_result(idem_key)
-            if cached:
-                return cached
-            raise HTTPException(status_code=409, detail="Message is being processed")
+    cached = await idempotency.get_result(idem_key)
+    if cached:
+        cached_message = cached.get("message", {})
+        cached_id = cached_message.get("id")
+
+        if cached_id:
+            existing_message = db.query(ChatMessage).filter(
+                ChatMessage.id == cached_id,
+                ChatMessage.sender_id == current_user.id,
+                ChatMessage.receiver_id == receiver.id,
+            ).first()
+
+            if existing_message:
+                return {
+                    "success": True,
+                    "message": serialize_message(existing_message),
+                }
+
+    raise HTTPException(status_code=409, detail="Message is being processed")
 
     media_url = None
     media_type = None
