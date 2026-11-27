@@ -516,7 +516,11 @@ async def send_message(
 
     media_url = None
     media_type = None
-    if file is not None and file.filename:
+    if file is not None:
+        if not file.filename:
+            if idem_key:
+                await idempotency.release(idem_key)
+            raise HTTPException(status_code=400, detail="File name is missing.")
         try:
             media_url, media_type = await save_chat_upload(file, current_user.id)
         except HTTPException:
