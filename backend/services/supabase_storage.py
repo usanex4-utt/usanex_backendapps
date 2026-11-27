@@ -125,5 +125,39 @@ def upload_chat_media(
     except Exception as e:
         logger.error("Chat media upload failed: %s", e)
         raise RuntimeError("Chat media upload failed.")
+
+
+def get_chat_media_signed_url(
+    file_path: str,
+    expires_in: int = 3600
+) -> str:
+    if not _supabase_configured():
+        raise RuntimeError("Supabase storage is not configured.")
+
+    if not file_path:
+        raise ValueError("Chat media path is required.")
+
+    try:
+        supabase = get_supabase_client()
+
+        result = supabase.storage.from_(CHAT_BUCKET).create_signed_url(
+            path=file_path,
+            expires_in=expires_in,
+        )
+
+        signed_url = (
+            result.get("signedURL")
+            or result.get("signedUrl")
+        )
+
+        if not signed_url:
+            raise RuntimeError("Signed URL was not returned.")
+
+        return signed_url
+
+    except Exception as e:
+        logger.error("Chat media signed URL failed: %s", e)
+        raise RuntimeError("Could not generate chat media URL.")
+        
         
 
