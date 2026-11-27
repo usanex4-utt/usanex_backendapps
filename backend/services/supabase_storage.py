@@ -133,7 +133,11 @@ def delete_chat_media(file_path: str) -> None:
     if not file_path:
         raise ValueError("Chat media path is required.")
 
-    get_supabase_client().storage.from_(CHAT_BUCKET).remove([file_path])
+        try:
+        get_supabase_client().storage.from_(CHAT_BUCKET).remove([file_path])
+    except Exception as e:
+        logger.error("Chat media delete failed for %s: %s", file_path, e)
+        raise RuntimeError("Chat media delete failed.")
 
 
 def get_chat_media_signed_url(
