@@ -233,7 +233,8 @@ def submit_second_heart(
          "session_id": session.id,
          "status": session.status,
          "submitted_by_user_id": user_id,
-       }
+        
+    }
 
     background_tasks.add_task(
         couple_manager.send_to_user,
