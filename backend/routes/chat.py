@@ -630,6 +630,35 @@ async def chat_presence_websocket(
                     is_typing=payload.get("typing") is True,
                 )
 
+                elif payload.get("type") == "delivered":
+                message_id = payload.get("message_id")
+
+                if not isinstance(message_id, int):
+                    continue
+
+                message = (
+                    db.query(ChatMessage)
+                    .filter(
+                        ChatMessage.id == message_id,
+                        ChatMessage.sender_id == partner_id,
+                        ChatMessage.receiver_id == current_user.id,
+                        ChatMessage.is_deleted == 0,
+                    )
+                    .first()
+                )
+
+                if message and not message.is_delivered:
+                    message.is_delivered = 1
+                    db.commit()
+
+                    await chat_manager.send_to_user(
+                        partner_id,
+                        {
+                            "type": "delivered",
+                            "message_id": message.id,
+                        },
+                    )
+
     except WebSocketDisconnect:
         pass
     except Exception:
