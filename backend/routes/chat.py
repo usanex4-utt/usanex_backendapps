@@ -193,6 +193,19 @@ def serialize_user(user):
         "profile_photo": user.profile_photo,
     }
 
+def safe_chat_media_url(media_path):
+    if not media_path:
+        return None
+
+    try:
+        return get_chat_media_signed_url(media_path)
+    except Exception:
+        logging.exception(
+            "Chat media URL unavailable: %s",
+            media_path
+        )
+        return None
+
 
 def serialize_message(message):
     return {
