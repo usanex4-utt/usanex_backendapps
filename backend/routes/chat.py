@@ -494,18 +494,18 @@ async def send_message(
                 cached_message = cached.get("message", {})
                 cached_id = cached_message.get("id")
 
-            if cached_id:
-                existing_message = db.query(ChatMessage).filter(
-                ChatMessage.id == cached_id,
-                ChatMessage.sender_id == current_user.id,
-                ChatMessage.receiver_id == receiver.id,
-            ).first()
+                if cached_id:
+                    existing_message = db.query(ChatMessage).filter(
+                    ChatMessage.id == cached_id,
+                    ChatMessage.sender_id == current_user.id,
+                    ChatMessage.receiver_id == receiver.id,
+                 ).first()
 
-            if existing_message:
-                return {
-                    "success": True,
-                    "message": serialize_message(existing_message),
-                }
+                 if existing_message:
+                    return {
+                     "success": True,
+                     "message": serialize_message(existing_message),
+                    }
 
     raise HTTPException(status_code=409, detail="Message is being processed")
 
