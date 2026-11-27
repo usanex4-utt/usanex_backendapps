@@ -392,6 +392,10 @@ async def get_chat(
                     current_user.id, chat_user.id
                 )
             cached_messages = list(reversed(cached[:limit]))
+            for message in cached_messages:
+                media_path = message.get("media_url")
+                if media_path:
+                    message["media_url"] = get_chat_media_signed_url(media_path)
 
             for message in cached_messages:
                 if (
