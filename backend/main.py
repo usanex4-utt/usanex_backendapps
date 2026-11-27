@@ -176,6 +176,35 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app = FastAPI(
+    title="UtaNexa",
+    # बाकी मौजूदा settings
+)
+
+# इसी जगह validation handler Paste करना है
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    safe_errors = [
+        {
+            "loc": error.get("loc"),
+            "msg": error.get("msg"),
+            "type": error.get("type"),
+        }
+        for error in exc.errors()
+    ]
+
+    print(
+        f"[REQUEST VALIDATION ERROR] "
+        f"{request.method} {request.url.path}: {safe_errors}"
+    )
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": safe_errors},
+    )
+
+# इसके बाद तुम्हारा पुराना बाकी code
+
 # =========================================================
 # STATIC FILES (For Moments & Chat Uploads)
 # =========================================================
