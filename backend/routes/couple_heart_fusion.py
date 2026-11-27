@@ -225,6 +225,28 @@ def submit_second_heart(
             "Could not submit second heart.",
         )
 
+
+
+        event = {
+        "type": "heart_fusion_updated",
+        "action": "second_heart_submitted",
+        "session_id": session.id,
+        "status": session.status,
+        "submitted_by_user_id": user_id,
+    }
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_one_id,
+        event,
+    )
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_two_id,
+        event,
+    )
+
     
     
     
