@@ -6,7 +6,8 @@ import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from .routes import admin_dashboard 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -157,6 +158,28 @@ async def lifespan(app: FastAPI):
         await close_redis()
         print("[Usanex] Redis Disconnected")
         print("[Usanex] Shutdown complete")
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    safe_errors = [
+        {
+            "loc": error.get("loc"),
+            "msg": error.get("msg"),
+            "type": error.get("type"),
+        }
+        for error in exc.errors()
+    ]
+
+    print(
+        f"[REQUEST VALIDATION ERROR] "
+        f"{request.method} {request.url.path}: {safe_errors}"
+    )
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": safe_errors},
+    )
 
 
 # =========================================================
