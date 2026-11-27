@@ -330,10 +330,33 @@ async def get_chat(
 
     require_connected(db, current_user.id, chat_user.id)
 
-    # Cache path (only recent page)
+     # Cache path (only recent page)
     if offset == 0 and limit <= 50:
-        cached = await message_cache.get_recent_chat(current_user.id, chat_user.id, limit)
+        cached = await message_cache.get_recent_chat(
+            current_user.id, chat_user.id, limit
+        )
+
         if cached is not None:
+            unread = (
+                db.query(ChatMessage)
+                .filter(
+                    ChatMessage.sender_id == chat_user.id,
+                    ChatMessage.receiver_id == current_user.id,
+                    ChatMessage.is_read == 0,
+                    ChatMessage.is_deleted == 0,
+                )
+                .all()
+            )
+
+            if unread:
+                for message in unread:
+                    message.is_read = 1
+                db.commit()
+
+                await message_cache.invalidate_chat(
+                    current_user.id, chat_user.id
+                )
+
             return {
                 "success": True,
                 "current_user": serialize_user(current_user),
