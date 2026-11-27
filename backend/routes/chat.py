@@ -27,6 +27,7 @@ from ..database.database import SessionLocal
 from ..database.models import User, UserSession, UserConnection, ChatMessage
 from ..services.redis import session_service, presence_service, message_cache, idempotency
 from ..websocket.chat_manager import chat_manager
+from ..services.supabase_storage import upload_chat_media
 
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
