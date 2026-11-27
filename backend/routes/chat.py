@@ -199,7 +199,7 @@ def serialize_message(message):
         "receiver_id": message.receiver_id,
         "content": message.content,
         "message": message.content,
-        "media_url": message.media_url,
+        "media_url": get_chat_media_signed_url(message.media_url) if message.media_url else None,
         "media_type": message.media_type,
         "read": bool(message.is_read),
         "is_read": bool(message.is_read),
