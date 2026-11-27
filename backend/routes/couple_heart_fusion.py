@@ -162,6 +162,7 @@ def create_fusion_session(
 def submit_second_heart(
     session_id: int,
     payload: SubmitSecondHeartRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
