@@ -489,13 +489,13 @@ async def send_message(
     if client_message_id:
         idem_key = f"chat:{current_user.id}:{client_message_id}"
         if not await idempotency.acquire(idem_key):
-    cached = await idempotency.get_result(idem_key)
-    if cached:
-        cached_message = cached.get("message", {})
-        cached_id = cached_message.get("id")
+            cached = await idempotency.get_result(idem_key)
+            if cached:
+                cached_message = cached.get("message", {})
+                cached_id = cached_message.get("id")
 
-        if cached_id:
-            existing_message = db.query(ChatMessage).filter(
+            if cached_id:
+                existing_message = db.query(ChatMessage).filter(
                 ChatMessage.id == cached_id,
                 ChatMessage.sender_id == current_user.id,
                 ChatMessage.receiver_id == receiver.id,
