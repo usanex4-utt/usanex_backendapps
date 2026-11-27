@@ -44,7 +44,7 @@ def run_migrations():
 
             with engine.begin() as connection:
                 connection.execute(text(sql))
-        # Initialize Chat delivered status safely.
+    # Initialize Chat delivered status safely.
     inspector = inspect(engine)
 
     if inspector.has_table("chat_messages"):
