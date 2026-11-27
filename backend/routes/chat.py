@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import uuid
 import logging
+import mimetypes
 
 from fastapi import (
     APIRouter,
