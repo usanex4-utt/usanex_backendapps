@@ -370,9 +370,10 @@ async def get_chat(
                 "success": True,
                 "current_user": serialize_user(current_user),
                 "user": serialize_user(chat_user),
-                "messages": list(reversed(cached[:limit])),
+                "messages": cached_messages,
                 "cached": True,
             }
+                            
 
     messages = (
         db.query(ChatMessage)
