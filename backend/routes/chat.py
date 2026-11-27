@@ -30,6 +30,7 @@ from ..services.redis import session_service, presence_service, message_cache, i
 from ..websocket.chat_manager import chat_manager
 from ..services.supabase_storage import upload_chat_media
 from ..services.supabase_storage import get_chat_media_signed_url
+from ..services.supabase_storage import delete_chat_media
 
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
@@ -544,11 +545,12 @@ async def send_message(
             await idempotency.release(idem_key)
         if media_url:
             try:
-                project_root = Path(__file__).resolve().parents[2]
-                local_path = project_root / "frontend" / media_url.lstrip("/")
-                if local_path.is_file():
-                    local_path.unlink()
-            except OSError:
+                delete_chat_media(media_url)
+            except Exception:
+                logging.exception(
+                    "Failed to delete orphaned chat media: %s",
+                    media_url
+                )
                 pass
         raise HTTPException(status_code=500, detail="Message could not be saved.")
 
