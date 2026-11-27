@@ -44,6 +44,37 @@ def run_migrations():
 
             with engine.begin() as connection:
                 connection.execute(text(sql))
+        # Initialize Chat delivered status safely.
+    inspector = inspect(engine)
+
+    if inspector.has_table("chat_messages"):
+        chat_columns = {
+            column["name"]
+            for column in inspector.get_columns("chat_messages")
+        }
+
+        if "is_delivered" in chat_columns:
+            with engine.begin() as connection:
+                connection.execute(text("""
+                    UPDATE chat_messages
+                    SET is_delivered = 0
+                    WHERE is_delivered IS NULL
+                """))
+
+                connection.execute(text("""
+                    ALTER TABLE chat_messages
+                    ALTER COLUMN is_delivered SET DEFAULT 0
+                """))
+
+                connection.execute(text("""
+                    ALTER TABLE chat_messages
+                    ALTER COLUMN is_delivered SET NOT NULL
+                """))
+
+            print(
+                "[Usanex Migration] Chat delivered "
+                "status initialized."
+            )
     
     # Initialize per-Reel download preference safely.
     inspector = inspect(engine)
