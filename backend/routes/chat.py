@@ -36,7 +36,7 @@ SESSION_COOKIE_NAME = "usanex_session"
 
 MAX_SIZES = {
     "image": 25 * 1024 * 1024,
-    "video": 100 * 1024 * 1024,
+    "video": 50 * 1024 * 1024,
     "audio": 25 * 1024 * 1024,
     "document": 25 * 1024 * 1024,
 }
