@@ -202,6 +202,7 @@ def serialize_message(message):
         "read": bool(message.is_read),
         "is_read": bool(message.is_read),
         "is_deleted": bool(message.is_deleted),
+        "is_delivered": bool(message.is_delivered),
         "created_at": message.created_at.isoformat() if message.created_at else None,
     }
 
