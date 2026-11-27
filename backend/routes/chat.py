@@ -629,8 +629,7 @@ async def chat_presence_websocket(
                     receiver_id=partner_id,
                     is_typing=payload.get("typing") is True,
                 )
-
-                elif payload.get("type") == "delivered":
+            elif payload.get("type") == "delivered":
                 message_id = payload.get("message_id")
 
                 if not isinstance(message_id, int):
@@ -658,6 +657,8 @@ async def chat_presence_websocket(
                             "message_id": message.id,
                         },
                     )
+
+                
 
     except WebSocketDisconnect:
         pass
