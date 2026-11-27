@@ -656,51 +656,13 @@ async def chat_presence_websocket(
                             "type": "delivered",
                             "message_id": message.id,
                         },
-                elif payload.get("type") == "read":
-                message_id = payload.get("message_id")
-
-                   if not isinstance(message_id, int):
-                    continue
-
-                message = (
-                    db.query(ChatMessage)
-                    .filter(
-                        ChatMessage.id == message_id,
-                        ChatMessage.sender_id == partner_id,
-                        ChatMessage.receiver_id == current_user.id,
-                        ChatMessage.is_deleted == 0,
                     )
-                    .first()
-                )
 
-                            elif payload.get("type") == "read":
+            elif payload.get("type") == "read":
                 message_id = payload.get("message_id")
 
                 if not isinstance(message_id, int):
                     continue
-
-                message = (
-                    db.query(ChatMessage)
-                    .filter(
-                        ChatMessage.id == message_id,
-                        ChatMessage.sender_id == partner_id,
-                        ChatMessage.receiver_id == current_user.id,
-                        ChatMessage.is_deleted == 0,
-                    )
-                    .first()
-                )
-
-                if message and not message.is_read:
-                    message.is_read = 1
-                    db.commit()
-
-                    await chat_manager.send_to_user(
-                        partner_id,
-                        {
-                            "type": "read",
-                            "message_id": message.id,
-                        },
-            )
 
                 message = (
                     db.query(ChatMessage)
