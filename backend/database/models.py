@@ -2351,6 +2351,11 @@ class ChatMessage(Base):
         default=0,
         nullable=False,
     )
+    is_delivered = Column(
+        Integer,
+        default=0,
+        nullable=False,
+    )
 
     is_deleted = Column(
         Integer,
