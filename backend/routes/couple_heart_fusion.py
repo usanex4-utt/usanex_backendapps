@@ -489,6 +489,7 @@ def start_fusion(
 @router.post("/sessions/{session_id}/fuse")
 def create_surprise_fusion(
     session_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
@@ -615,6 +616,25 @@ def create_surprise_fusion(
     except Exception:
         db.rollback()
         raise HTTPException(500, "Could not create Surprise Crystal Heart.")
+    event = {
+        "type": "heart_fusion_updated",
+        "action": "surprise_heart_created",
+        "session_id": session.id,
+        "status": session.status,
+        "surprise_heart": session.surprise_heart,
+        "fusion_started_at": to_utc_iso(session.fusion_started_at),
+    }
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_one_id,
+        event,
+    )
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_two_id,
+        event,
+    )
 
     return {
         "success": True,
