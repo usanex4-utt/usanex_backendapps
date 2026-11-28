@@ -648,6 +648,7 @@ def create_surprise_fusion(
 @router.post("/sessions/{session_id}/complete")
 def complete_fusion_animation(
     session_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
@@ -700,6 +701,29 @@ def complete_fusion_animation(
     except Exception:
         db.rollback()
         raise HTTPException(500, "Could not save fusion completion.")
+    event = {
+        "type": "heart_fusion_updated",
+        "action": "animation_completed",
+        "session_id": session.id,
+        "status": session.status,
+        "user_one_fusion_completed": session.user_one_fusion_completed,
+        "user_two_fusion_completed": session.user_two_fusion_completed,
+        "both_completed": (
+            session.user_one_fusion_completed
+            and session.user_two_fusion_completed
+        ),
+    }
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_one_id,
+        event,
+    )
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_two_id,
+        event,
+    )
         
     
 
