@@ -746,6 +746,7 @@ def complete_fusion_animation(
 def submit_fusion_rating(
     session_id: int,
     payload: SubmitFusionRatingRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
@@ -811,6 +812,25 @@ def submit_fusion_rating(
     except Exception:
         db.rollback()
         raise HTTPException(500, "Could not save your rating.")
+    event = {
+        "type": "heart_fusion_updated",
+        "action": "rating_submitted",
+        "session_id": session.id,
+        "status": session.status,
+        "ratings_submitted": rating_count,
+        "both_rated": rating_count >= 2,
+    }
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_one_id,
+        event,
+    )
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_two_id,
+        event,
+    )
 
     return {
         "success": True,
