@@ -2345,6 +2345,11 @@ class ChatMessage(Base):
         String(30),
         nullable=True,
     )
+    reply_to_message_id = Column(
+      Integer,
+      nullable=True,
+      index=True,
+    )
 
     is_read = Column(
         Integer,
