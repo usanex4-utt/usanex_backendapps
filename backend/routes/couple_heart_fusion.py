@@ -399,6 +399,7 @@ def get_fusion_session(
 @router.post("/sessions/{session_id}/start")
 def start_fusion(
     session_id: int,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_from_request),
 ):
@@ -449,6 +450,26 @@ def start_fusion(
     except Exception:
         db.rollback()
         raise HTTPException(500, "Could not start fusion.")
+    event = {
+        "type": "heart_fusion_updated",
+        "action": "partner_started",
+        "session_id": session.id,
+        "status": session.status,
+        "user_one_started": session.user_one_started,
+        "user_two_started": session.user_two_started,
+        "countdown_started_at": to_utc_iso(session.countdown_started_at),
+    }
+
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_one_id,
+        event,
+    )
+    background_tasks.add_task(
+        couple_manager.send_to_user,
+        session.user_two_id,
+        event,
+    )
 
     return {
         "success": True,
